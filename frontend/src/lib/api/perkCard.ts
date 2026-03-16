@@ -31,4 +31,3 @@ export function getPerkCards(): Promise<PerkCardItem[]> {
 export function usePerkCard(id: string): Promise<PerkCardItem> {
   return apiClient.post(`/api/v1/perk-cards/${id}/use`).then((r) => r.data)
 }
-

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-16
+
+### Added
+
+- **Task priorities (T0/T1/T2)**: Tasks now carry a `priority` field across template and AI tasks; the UI sorts and highlights urgent/milestone tasks.
+- **Proof photo completion**: Dad can optionally upload a proof photo when completing a task; Mom review UI shows thumbnails.
+- **Shell Gifts (blind-box shells)**: Completing a task generates a shell gift for Mom (AI-generated title/content + optional proof photo); Mom can list and open shell gifts.
+- **Dad dashboard**: Skill radar (six dimensions), achievements (seeded defaults + auto-unlock on verification), and perk cards (Mom issues, Dad redeems).
+
+### Fixed
+
+- **Vite 8 dependency resolution**: Updated `@vitejs/plugin-react` to match Vite 8 peer dependencies so `npm ci` succeeds.
+- **MediaPipe Hands build**: Switched to side-effect import + global `Hands` usage to avoid missing ESM named exports under Vite 8/Rolldown.
+- **ESLint**: Removed `any` usage in MediaPipe global access.
+
+---
+
 ## [1.2.0] - 2026-03-15
 
 ### Added

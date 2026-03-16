@@ -43,7 +43,7 @@ MomShell/
 │   │   ├── fileutil/           # Shared file utilities (deletion helper)
 │   │   ├── handler/            # HTTP handlers (Gin)
 │   │   ├── middleware/         # Auth, CORS, recovery, rate limiting
-│   │   ├── model/              # GORM models (User, ChatMemory, ChatMemoryFact, etc.)
+│   │   ├── model/              # GORM models (User, Task, ShellGift, Achievement, PerkCard, etc.)
 │   │   ├── repository/         # Data access layer
 │   │   ├── router/             # Route registration
 │   │   ├── scheduler/          # Background job scheduling (photo cleanup)
@@ -61,13 +61,14 @@ MomShell/
 │       │   └── images/         # Scene sprites, icons, backgrounds
 │       ├── components/
 │       │   ├── overlay/        # UI panels (Auth, Chat, Community, AiMemory, Bar, Car,
-│       │   │                   #   Whisper, Task, Profile, RoleSelect, Landing, etc.)
+│       │   │                   #   Whisper, Task, ShellGift, Profile, RoleSelect, Landing, etc.)
 │       │   ├── react/          # React components (PearlShell 3D scene)
+│       │   ├── task/           # Task dashboard visuals (skill radar, etc.)
 │       │   └── scene/          # Beach scene layers (sky, ocean, sand, etc.)
 │       ├── composables/        # Vue composables (animation, parallax, waves, music, input)
 │       ├── constants/          # Scene configuration
 │       ├── lib/
-│       │   ├── api/            # API modules (chat, community, echo, photo, task, user, whisper)
+│       │   ├── api/            # API modules (chat, community, echo, photo, task, perkCard, shellGift, user, whisper)
 │       │   ├── apiClient.ts    # Axios instance with JWT interceptor
 │       │   └── auth.ts         # Raw fetch auth calls (register, login, refresh)
 │       ├── stores/             # Pinia stores (auth, UI)

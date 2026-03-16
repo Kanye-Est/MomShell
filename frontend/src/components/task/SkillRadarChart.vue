@@ -154,4 +154,3 @@ const valuePolygon = computed(() => {
   letter-spacing: 1px;
 }
 </style>
-

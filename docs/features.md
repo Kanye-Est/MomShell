@@ -57,11 +57,17 @@ Audio-to-text conversation feature.
 
 ## Tasks
 
-Goal-setting and tracking system.
+Daily task execution and partner verification loop (Dad Console).
 
-- **Task creation**: Set personal recovery goals
-- **Partner support**: Partners can participate in tasks with accept/reject workflow
-- **Progress polling**: Real-time status updates on partner task completion
+- **Daily task board**: Dad sees today's tasks with a `pending → completed → verified` lifecycle and XP/level progression
+- **AI task generation**: Tasks can be generated based on the baby's age stage, with categories and difficulty
+- **Priority levels**: `T0` (urgent / emotional intervention), `T1` (milestone), `T2` (daily routine)
+- **Proof photo completion**: Dad can optionally upload a proof photo when completing a task
+- **Partner review (Mom)**: Mom reviews Dad's completed tasks with score (1-5) or reject back to pending
+- **Progress polling**: UI polls for updates to keep task state in sync between partners
+- **Skill radar + achievements**: Verified task scores aggregate into a six-dimension radar; achievements auto-unlock from seeded rules
+- **Perk cards**: Mom can issue perk cards; Dad can redeem them (active/used/expired)
+- **Shell gifts**: Completing a task can generate a blind-box shell gift for Mom (AI title/content + optional proof photo)
 
 ## Beach Scene Navigation
 

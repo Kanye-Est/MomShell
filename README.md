@@ -24,7 +24,7 @@ AI-powered wellness platform combining emotional companionship, community suppor
 | **Echo / Memoir**   | Self-reflection space with AI-generated memoir stickers and partner connection     |
 | **Photo Gallery**   | Photo wall with AI-generated images, lifecycle management, and drag/zoom UI        |
 | **Whisper**         | Audio-to-text conversation using speech recognition                                |
-| **Tasks**           | Goal-setting and task-tracking system with partner support                         |
+| **Tasks / Dad Console** | Daily task board with T0/T1/T2 priority, proof photos, partner review, XP/level, skill radar + achievements, perk cards, and blind-box shell gifts |
 | **Mobile & PWA**    | Responsive mobile layout with portrait/landscape sprite configs, touch gestures, dynamic viewport units, and offline-capable service worker |
 | **Admin Panel**     | Embedded single-page admin at `/admin` — dashboard, user CRUD, config management   |
 
