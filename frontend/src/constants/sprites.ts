@@ -98,6 +98,21 @@ export const SPRITES: SpriteData[] = [
     landscape: { width: "6vw", left: "48%", top: "53%" },
   },
 
+  // Mom-only: blind box shells generated from Dad's completed tasks
+  {
+    id: "gift-shell",
+    src: shellImg,
+    left: "46%",
+    top: "66%",
+    width: "4.8vw",
+    rotate: -18,
+    zIndex: 10,
+    label: "盲盒贝壳",
+    labelSize: "1.1rem",
+    mobile: { width: "12vw", left: "42%", top: "46%" },
+    landscape: { width: "6vw", left: "42%", top: "58%" },
+  },
+
   {
     id: "chair",
     src: chairImg,

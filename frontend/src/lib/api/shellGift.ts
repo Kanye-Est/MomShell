@@ -21,4 +21,3 @@ export function getShellGifts(): Promise<ShellGiftItem[]> {
 export function openShellGift(id: string): Promise<ShellGiftItem> {
   return apiClient.post(`/api/v1/shell-gifts/${id}/open`).then((r) => r.data)
 }
-

@@ -12,6 +12,7 @@
   <AiMemoryPanel />
   <WhisperPanel />
   <TaskPanel />
+  <ShellGiftPanel />
 </template>
 
 <script setup lang="ts">
@@ -30,6 +31,7 @@ import MemoryPanel from '@/components/overlay/MemoryPanel.vue'
 import AiMemoryPanel from '@/components/overlay/AiMemoryPanel.vue'
 import WhisperPanel from '@/components/overlay/WhisperPanel.vue'
 import TaskPanel from '@/components/overlay/TaskPanel.vue'
+import ShellGiftPanel from '@/components/overlay/ShellGiftPanel.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 import { useTutorial } from '@/composables/useTutorial'

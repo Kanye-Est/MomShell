@@ -1,7 +1,7 @@
 <template>
   <div class="sprites-layer layer" ref="layerEl">
     <div
-      v-for="s in SPRITES"
+      v-for="s in visibleSprites"
       :key="s.id"
       :id="`sprite-${s.id}`"
       :class="['sprite-wrapper', { clickable: isSpriteClickable(s.id) }]"
@@ -99,6 +99,11 @@ const ctx = inject(PARALLAX_KEY)!
 const uiStore = useUiStore()
 const authStore = useAuthStore()
 
+const visibleSprites = computed(() => {
+  if (authStore.user?.role === 'mom') return SPRITES
+  return SPRITES.filter((s) => s.id !== 'gift-shell')
+})
+
 const crabHints = computed(() => {
   const roleHints = authStore.user?.role === 'dad' ? DAD_HINTS : MOM_HINTS
   return [...SHARED_HINTS, ...roleHints]
@@ -109,7 +114,7 @@ const currentHint = ref<string>(SHARED_HINTS[0])
 const crabBubblePosition = ref<{ left: string, top: string } | null>(null)
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null
 
-const CLICKABLE_SPRITES = new Set(['car', 'shell', 'chair', 'mailbox', 'bar', 'stone', 'crab'])
+const CLICKABLE_SPRITES = new Set(['car', 'shell', 'gift-shell', 'chair', 'mailbox', 'bar', 'stone', 'crab'])
 
 const crabBubbleStyle = computed(() => crabBubblePosition.value ?? undefined)
 
@@ -179,6 +184,7 @@ function onSpriteClick(id: string) {
   if (ctx.wasDrag()) return
   if (id === 'car') uiStore.openFeature('car')
   else if (id === 'shell') uiStore.openFeature('memory')
+  else if (id === 'gift-shell') uiStore.openFeature('shell-gift')
   else if (id === 'chair') uiStore.openFeature('task')
   else if (id === 'mailbox') uiStore.openFeature('whisper')
   else if (id === 'bar') uiStore.openFeature('bar')
