@@ -54,6 +54,7 @@ func main() {
 	photoRepo := repository.NewPhotoRepo(db)
 	whisperRepo := repository.NewWhisperRepo(db)
 	taskRepo := repository.NewTaskRepo(db)
+	shellGiftRepo := repository.NewShellGiftRepo(db)
 
 	// Initialize services
 	moderationService := service.NewModerationService()
@@ -82,12 +83,19 @@ func main() {
 	photoService := service.NewPhotoService(photoRepo, userRepo, chatClient, cfg.ImageModel)
 	whisperService := service.NewWhisperService(whisperRepo, userRepo, chatClient)
 
+	// Pass nil to shell gift service when no real API key — avoids dummy client network calls
+	var shellGiftAIClient *openai.Client
+	if cfg.OpenAIAPIKey != "" {
+		shellGiftAIClient = chatClient
+	}
+	shellGiftService := service.NewShellGiftService(shellGiftRepo, userRepo, shellGiftAIClient)
+
 	// Pass nil to task service when no real API key — avoids dummy client network calls
 	var taskAIClient *openai.Client
 	if cfg.OpenAIAPIKey != "" {
 		taskAIClient = chatClient
 	}
-	taskService := service.NewTaskService(taskRepo, userRepo, chatRepo, taskAIClient)
+	taskService := service.NewTaskService(taskRepo, userRepo, chatRepo, taskAIClient, shellGiftService)
 
 	// Ensure AI user exists for community AI replies
 	aiUserID := ensureAIUser(userRepo)
@@ -126,6 +134,7 @@ func main() {
 	photoHandler := handler.NewPhotoHandler(photoService)
 	whisperHandler := handler.NewWhisperHandler(whisperService)
 	taskHandler := handler.NewTaskHandler(taskService)
+	shellGiftHandler := handler.NewShellGiftHandler(shellGiftService)
 
 	// Setup Gin
 	r := gin.New()
@@ -153,6 +162,7 @@ func main() {
 			Photo:       photoHandler,
 			Whisper:     whisperHandler,
 			Task:        taskHandler,
+			ShellGift:   shellGiftHandler,
 		},
 	)
 

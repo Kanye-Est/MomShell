@@ -26,6 +26,7 @@ func Migrate(db *gorm.DB) error {
 		&model.DailyTask{},
 		&model.UserTask{},
 		&model.AIGeneratedTask{},
+		&model.ShellGift{},
 	); err != nil {
 		return err
 	}

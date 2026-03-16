@@ -32,6 +32,7 @@ type Handlers struct {
 	Photo       *handler.PhotoHandler
 	Whisper     *handler.WhisperHandler
 	Task        *handler.TaskHandler
+	ShellGift   *handler.ShellGiftHandler
 }
 
 func Setup(
@@ -208,6 +209,13 @@ func Setup(
 		tasks.GET("/stats", h.Task.Stats)
 		tasks.GET("/baby-age", h.Task.GetBabyAge)
 		tasks.PUT("/baby-age", h.Task.SetBabyAge)
+	}
+
+	// ==================== Shell Gifts ====================
+	shellGifts := api.Group("/shell-gifts", middleware.AuthRequired(cfg))
+	{
+		shellGifts.GET("", h.ShellGift.List)
+		shellGifts.POST("/:id/open", h.ShellGift.Open)
 	}
 
 	// ==================== Admin ====================

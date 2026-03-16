@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -19,10 +20,11 @@ const (
 )
 
 type TaskService struct {
-	taskRepo     *repository.TaskRepo
-	userRepo     *repository.UserRepo
-	chatRepo     *repository.ChatRepo
-	openaiClient *openai.Client
+	taskRepo         *repository.TaskRepo
+	userRepo         *repository.UserRepo
+	chatRepo         *repository.ChatRepo
+	openaiClient     *openai.Client
+	shellGiftService *ShellGiftService
 }
 
 func NewTaskService(
@@ -30,12 +32,14 @@ func NewTaskService(
 	userRepo *repository.UserRepo,
 	chatRepo *repository.ChatRepo,
 	openaiClient *openai.Client,
+	shellGiftService *ShellGiftService,
 ) *TaskService {
 	return &TaskService{
-		taskRepo:     taskRepo,
-		userRepo:     userRepo,
-		chatRepo:     chatRepo,
-		openaiClient: openaiClient,
+		taskRepo:         taskRepo,
+		userRepo:         userRepo,
+		chatRepo:         chatRepo,
+		openaiClient:     openaiClient,
+		shellGiftService: shellGiftService,
 	}
 }
 
@@ -100,6 +104,16 @@ func (s *TaskService) CompleteTask(userID, taskID string, proofPhotoURL *string)
 
 	if err := s.taskRepo.UpdateUserTask(ut); err != nil {
 		return nil, err
+	}
+
+	if s.shellGiftService != nil {
+		// Fire-and-forget: completion should not be blocked by AI generation.
+		utCopy := *ut
+		go func() {
+			if err := s.shellGiftService.CreateFromTask(utCopy); err != nil {
+				log.Printf("[TaskService] shell gift generation failed: %v", err)
+			}
+		}()
 	}
 
 	item := toTaskItem(*ut)
