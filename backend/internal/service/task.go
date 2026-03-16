@@ -78,7 +78,8 @@ func (s *TaskService) GetDailyTasks(userID string) ([]dto.UserTaskItem, error) {
 }
 
 // CompleteTask marks a task as completed by the Dad user.
-func (s *TaskService) CompleteTask(userID, taskID string) (*dto.UserTaskItem, error) {
+// proofPhotoURL is optional.
+func (s *TaskService) CompleteTask(userID, taskID string, proofPhotoURL *string) (*dto.UserTaskItem, error) {
 	ut, err := s.taskRepo.FindUserTaskByID(taskID)
 	if err != nil {
 		return nil, errors.New(errTaskNotFound)
@@ -93,6 +94,9 @@ func (s *TaskService) CompleteTask(userID, taskID string) (*dto.UserTaskItem, er
 	now := time.Now()
 	ut.Status = model.TaskCompleted
 	ut.CompletedAt = &now
+	if proofPhotoURL != nil && *proofPhotoURL != "" {
+		ut.ProofPhotoURL = proofPhotoURL
+	}
 
 	if err := s.taskRepo.UpdateUserTask(ut); err != nil {
 		return nil, err
@@ -206,6 +210,7 @@ func (s *TaskService) RejectTask(callerID, taskID string, comment string) (*dto.
 
 	ut.Status = model.TaskPending
 	ut.CompletedAt = nil
+	ut.ProofPhotoURL = nil
 	if comment != "" {
 		ut.Comment = &comment
 	}
@@ -247,14 +252,16 @@ func (s *TaskService) GetTaskStats(userID string) (*dto.TaskStats, error) {
 
 func toTaskItem(ut model.UserTask) dto.UserTaskItem {
 	item := dto.UserTaskItem{
-		ID:          ut.ID,
-		Status:      string(ut.Status),
-		Source:      string(ut.Source),
-		Score:       ut.Score,
-		Comment:     ut.Comment,
-		CompletedAt: ut.CompletedAt,
-		ScoredAt:    ut.ScoredAt,
-		Date:        ut.Date,
+		ID:            ut.ID,
+		Priority:      string(ut.Priority),
+		Status:        string(ut.Status),
+		Source:        string(ut.Source),
+		Score:         ut.Score,
+		Comment:       ut.Comment,
+		ProofPhotoURL: ut.ProofPhotoURL,
+		CompletedAt:   ut.CompletedAt,
+		ScoredAt:      ut.ScoredAt,
+		Date:          ut.Date,
 	}
 
 	if ut.Source == model.TaskSourceAI {
@@ -267,6 +274,14 @@ func toTaskItem(ut model.UserTask) dto.UserTaskItem {
 		item.Description = ut.Task.Description
 		item.Category = string(ut.Task.Category)
 		item.Difficulty = ut.Task.Difficulty
+	}
+
+	if item.Priority == "" {
+		if ut.Task != nil && ut.Task.Priority != "" {
+			item.Priority = string(ut.Task.Priority)
+		} else {
+			item.Priority = string(model.PriorityT2)
+		}
 	}
 
 	if item.Source == "" {
@@ -305,6 +320,10 @@ func (s *TaskService) createTasksForUser(user *model.User, userID string, date t
 						AIDescription: at.Description,
 						AICategory:    at.Category,
 						AIDifficulty:  at.Difficulty,
+						Priority:      model.TaskPriority(at.Priority),
+					}
+					if ut.Priority == "" {
+						ut.Priority = model.PriorityT2
 					}
 					_ = s.taskRepo.CreateUserTask(ut)
 				}
@@ -321,12 +340,17 @@ func (s *TaskService) createTasksForUser(user *model.User, userID string, date t
 	}
 	for _, tmpl := range templates {
 		tid := tmpl.ID
+		priority := tmpl.Priority
+		if priority == "" {
+			priority = model.PriorityT2
+		}
 		ut := &model.UserTask{
-			UserID: userID,
-			TaskID: &tid,
-			Date:   date,
-			Status: model.TaskPending,
-			Source: model.TaskSourceTemplate,
+			UserID:   userID,
+			TaskID:   &tid,
+			Date:     date,
+			Status:   model.TaskPending,
+			Source:   model.TaskSourceTemplate,
+			Priority: priority,
 		}
 		_ = s.taskRepo.CreateUserTask(ut)
 	}

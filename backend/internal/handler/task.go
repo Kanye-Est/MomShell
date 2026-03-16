@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -34,7 +36,13 @@ func (h *TaskHandler) Complete(c *gin.Context) {
 	taskID := c.Param("id")
 	userID := middleware.GetUserID(c)
 
-	item, err := h.taskService.CompleteTask(userID, taskID)
+	var req dto.CompleteTaskRequest
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	item, err := h.taskService.CompleteTask(userID, taskID, req.ProofPhotoURL)
 	if err != nil {
 		status := http.StatusBadRequest
 		if err.Error() == "任务不存在" {

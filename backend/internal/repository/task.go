@@ -65,11 +65,12 @@ func (r *TaskRepo) UpdateUserTask(ut *model.UserTask) error {
 // ResetUserTaskToPending clears completed_at and sets status back to pending.
 func (r *TaskRepo) ResetUserTaskToPending(ut *model.UserTask) error {
 	return r.db.Model(ut).
-		Select("status", "completed_at", "comment").
+		Select("status", "completed_at", "comment", "proof_photo_url").
 		Updates(map[string]interface{}{
-			"status":       ut.Status,
-			"completed_at": nil,
-			"comment":      ut.Comment,
+			"status":          ut.Status,
+			"completed_at":    nil,
+			"comment":         ut.Comment,
+			"proof_photo_url": nil,
 		}).Error
 }
 

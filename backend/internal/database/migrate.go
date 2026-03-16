@@ -87,6 +87,9 @@ func seedDailyTasks(db *gorm.DB) {
 	}
 
 	for i := range tasks {
+		if tasks[i].Priority == "" {
+			tasks[i].Priority = model.PriorityT2
+		}
 		db.Create(&tasks[i])
 	}
 }

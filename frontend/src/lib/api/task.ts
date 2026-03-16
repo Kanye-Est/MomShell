@@ -6,9 +6,11 @@ export interface UserTaskItem {
   description: string;
   category: string;
   difficulty: number;
+  priority: string;
   status: string;
   score: number | null;
   comment: string | null;
+  proof_photo_url: string | null;
   completed_at: string | null;
   scored_at: string | null;
   date: string;
@@ -28,8 +30,13 @@ export function getDailyTasks(): Promise<UserTaskItem[]> {
   return apiClient.get("/api/v1/tasks/daily").then((r) => r.data);
 }
 
-export function completeTask(id: string): Promise<UserTaskItem> {
-  return apiClient.post(`/api/v1/tasks/${id}/complete`).then((r) => r.data);
+export function completeTask(
+  id: string,
+  data?: { proof_photo_url?: string },
+): Promise<UserTaskItem> {
+  return apiClient
+    .post(`/api/v1/tasks/${id}/complete`, data ?? {})
+    .then((r) => r.data);
 }
 
 export function getPartnerTasks(): Promise<UserTaskItem[]> {

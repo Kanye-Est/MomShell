@@ -17,6 +17,15 @@ const (
 	TaskCategoryEmotional TaskCategory = "emotional"
 )
 
+// TaskPriority enum
+type TaskPriority string
+
+const (
+	PriorityT0 TaskPriority = "T0" // 突发/情绪干预
+	PriorityT1 TaskPriority = "T1" // 关键里程碑
+	PriorityT2 TaskPriority = "T2" // 日常守护
+)
+
 // TaskStatus enum
 type TaskStatus string
 
@@ -33,6 +42,7 @@ type DailyTask struct {
 	Description string       `gorm:"type:text" json:"description"`
 	Category    TaskCategory `gorm:"type:varchar(50);not null;index" json:"category"`
 	Difficulty  int          `gorm:"default:1" json:"difficulty"` // 1-5
+	Priority    TaskPriority `gorm:"type:varchar(10);default:'T2'" json:"priority"`
 	CreatedAt   time.Time    `json:"created_at"`
 }
 
@@ -60,6 +70,9 @@ type UserTask struct {
 	Date   time.Time  `gorm:"type:date;not null;index" json:"date"`
 	Status TaskStatus `gorm:"type:varchar(20);default:'pending'" json:"status"`
 
+	// Priority level
+	Priority TaskPriority `gorm:"type:varchar(10);default:'T2'" json:"priority"`
+
 	// AI-generated task fields (populated when Source == "ai")
 	Source        TaskSource `gorm:"type:varchar(20);default:'template'" json:"source"`
 	AITitle       string     `gorm:"column:ai_title;type:varchar(200)" json:"ai_title,omitempty"`
@@ -72,6 +85,9 @@ type UserTask struct {
 	Comment    *string    `gorm:"type:text" json:"comment"`
 	ScoredByID *string    `gorm:"type:varchar(36)" json:"scored_by_id"`
 	ScoredAt   *time.Time `json:"scored_at"`
+
+	// Proof photo (optional, attached when completing)
+	ProofPhotoURL *string `gorm:"type:varchar(500)" json:"proof_photo_url"`
 
 	CompletedAt *time.Time `json:"completed_at"`
 	CreatedAt   time.Time  `json:"created_at"`

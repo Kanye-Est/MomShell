@@ -19,6 +19,7 @@ type AITaskData struct {
 	Description string `json:"description"`
 	Category    string `json:"category"`
 	Difficulty  int    `json:"difficulty"`
+	Priority    string `json:"priority"`
 }
 
 // ageStageLabels maps backend keys to Chinese display labels for the prompt.
@@ -145,11 +146,12 @@ func generateAITasks(
 - 任务要与孩子当前年龄阶段匹配
 - 任务类别包括：housework（家务）、parenting（育儿）、health（健康）、emotional（情感）
 - 每个任务难度1-5分
+- 每个任务需要标注优先级 priority：T0（突发/情绪干预）、T1（关键里程碑）、T2（日常守护）
 - 任务要具体可执行，不要太笼统
 - 包含直接照顾宝宝的任务，也要包含关心妈妈的任务
 - 用中文描述
 
-请以JSON数组格式返回，每个元素包含：title, description, category, difficulty
+请以JSON数组格式返回，每个元素包含：title, description, category, difficulty, priority
 不要返回任何其他内容，只返回JSON数组。`
 
 	userPrompt := fmt.Sprintf("孩子当前年龄阶段：%s\n请生成今日任务。", label)
@@ -180,12 +182,21 @@ func generateAITasks(
 		return nil, fmt.Errorf("failed to parse AI tasks: %w (response: %s)", err, cleaned[:min(len(cleaned), 200)])
 	}
 
+	return normalizeAITasks(tasks), nil
+}
+
+func normalizeAITasks(tasks []AITaskData) []AITaskData {
 	// Validate categories
 	validCategories := map[string]bool{
 		"housework": true, "parenting": true,
 		"health": true, "emotional": true,
 	}
+	validPriorities := map[string]bool{
+		"T0": true, "T1": true, "T2": true,
+	}
+
 	for i := range tasks {
+		tasks[i].Category = strings.ToLower(strings.TrimSpace(tasks[i].Category))
 		if !validCategories[tasks[i].Category] {
 			tasks[i].Category = "parenting"
 		}
@@ -195,9 +206,14 @@ func generateAITasks(
 		if tasks[i].Difficulty > 5 {
 			tasks[i].Difficulty = 5
 		}
+
+		tasks[i].Priority = strings.ToUpper(strings.TrimSpace(tasks[i].Priority))
+		if !validPriorities[tasks[i].Priority] {
+			tasks[i].Priority = "T2"
+		}
 	}
 
-	return tasks, nil
+	return tasks
 }
 
 // getOrGenerateAITasks checks cache first, then generates if needed.
@@ -213,7 +229,7 @@ func getOrGenerateAITasks(
 	if err == nil && cache != nil {
 		var tasks []AITaskData
 		if err := json.Unmarshal([]byte(cache.TasksJSON), &tasks); err == nil {
-			return tasks, nil
+			return normalizeAITasks(tasks), nil
 		}
 		// Bad cache entry — delete it so the unique index won't block re-save
 		log.Printf("[TaskAI] cache parse error for %s/%s, deleting and regenerating", ck, date)

@@ -21,13 +21,48 @@
         <div v-else-if="tasks.length === 0" class="empty-state">今天没有任务</div>
 
         <div v-else class="task-list">
-          <div v-for="t in tasks" :key="t.id" :class="['task-card', `status-${t.status}`]">
+          <div
+            v-for="t in sortedTasks"
+            :key="t.id"
+            :class="[
+              'task-card',
+              `status-${t.status}`,
+              `pri-${t.priority || 'T2'}`,
+            ]"
+          >
             <div class="task-header">
-              <span :class="['category-badge', `cat-${t.category}`]">{{ categoryLabel(t.category) }}</span>
+              <div class="task-badges">
+                <span
+                  :class="['priority-badge', `pri-${t.priority || 'T2'}`]"
+                  :title="priorityTip(t.priority)"
+                >
+                  {{ priorityLabel(t.priority) }}
+                </span>
+                <span :class="['category-badge', `cat-${t.category}`]">
+                  {{ categoryLabel(t.category) }}
+                </span>
+              </div>
               <span class="difficulty">{{ difficultyStars(t.difficulty) }}</span>
             </div>
-            <h3 class="task-title">{{ t.title }}</h3>
-            <p class="task-desc">{{ t.description }}</p>
+
+            <div class="task-body">
+              <div class="task-kv">
+                <div class="task-k">做什么</div>
+                <h3 class="task-title">{{ t.title }}</h3>
+              </div>
+              <div class="task-kv">
+                <div class="task-k">怎么做</div>
+                <p class="task-desc">{{ t.description }}</p>
+              </div>
+              <img
+                v-if="t.proof_photo_url && t.status !== 'pending'"
+                class="proof-thumb"
+                :src="t.proof_photo_url"
+                alt=""
+                loading="lazy"
+              />
+            </div>
+
             <div class="task-footer">
               <span v-if="t.status === 'pending'" class="status-text pending">待完成</span>
               <span v-else-if="t.status === 'completed'" class="status-text completed">已完成，等待验收</span>
@@ -36,7 +71,7 @@
                 v-if="t.status === 'pending'"
                 class="action-btn complete-btn"
                 :disabled="completing === t.id"
-                @click="onComplete(t.id)"
+                @click="openCompleteDialog(t)"
               >
                 {{ completing === t.id ? '...' : '完成' }}
               </button>
@@ -66,13 +101,48 @@
         <div v-else-if="tasks.length === 0" class="empty-state">今天还没有任务</div>
 
         <div v-else class="task-list">
-          <div v-for="t in tasks" :key="t.id" :class="['task-card', `status-${t.status}`]">
+          <div
+            v-for="t in sortedTasks"
+            :key="t.id"
+            :class="[
+              'task-card',
+              `status-${t.status}`,
+              `pri-${t.priority || 'T2'}`,
+            ]"
+          >
             <div class="task-header">
-              <span :class="['category-badge', `cat-${t.category}`]">{{ categoryLabel(t.category) }}</span>
+              <div class="task-badges">
+                <span
+                  :class="['priority-badge', `pri-${t.priority || 'T2'}`]"
+                  :title="priorityTip(t.priority)"
+                >
+                  {{ priorityLabel(t.priority) }}
+                </span>
+                <span :class="['category-badge', `cat-${t.category}`]">
+                  {{ categoryLabel(t.category) }}
+                </span>
+              </div>
               <span class="difficulty">{{ difficultyStars(t.difficulty) }}</span>
             </div>
-            <h3 class="task-title">{{ t.title }}</h3>
-            <p class="task-desc">{{ t.description }}</p>
+
+            <div class="task-body">
+              <div class="task-kv">
+                <div class="task-k">做什么</div>
+                <h3 class="task-title">{{ t.title }}</h3>
+              </div>
+              <div class="task-kv">
+                <div class="task-k">怎么做</div>
+                <p class="task-desc">{{ t.description }}</p>
+              </div>
+              <img
+                v-if="t.proof_photo_url && t.status !== 'pending'"
+                class="proof-thumb"
+                :src="t.proof_photo_url"
+                alt=""
+                loading="lazy"
+              />
+            </div>
+
             <div class="task-footer">
               <span v-if="t.status === 'pending'" class="status-text pending">未完成</span>
               <span v-else-if="t.status === 'completed'" class="status-text completed">待验收</span>
@@ -120,6 +190,58 @@
         </div>
       </template>
 
+      <!-- Complete task: proof photo dialog (Dad) -->
+      <Transition name="complete-fade">
+        <div
+          v-if="showCompleteDialog"
+          class="complete-overlay"
+          @click.self="closeCompleteDialog"
+        >
+          <div class="complete-dialog">
+            <h3 class="complete-title">完成任务</h3>
+            <p v-if="completeTarget" class="complete-subtitle">{{ completeTarget.title }}</p>
+
+            <div class="complete-actions">
+              <label class="proof-picker">
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  class="proof-input"
+                  :disabled="proofUploading"
+                  @change="onProofFileChange"
+                />
+                <span class="proof-picker-btn">拍照或上传证明</span>
+              </label>
+            </div>
+
+            <img v-if="proofPreviewUrl" class="proof-preview" :src="proofPreviewUrl" alt="" />
+
+            <p v-if="completeDialogError" class="complete-error">{{ completeDialogError }}</p>
+
+            <div class="complete-footer">
+              <button class="action-btn cancel-btn" :disabled="proofUploading" @click="closeCompleteDialog">
+                取消
+              </button>
+              <button
+                class="action-btn skip-btn"
+                :disabled="proofUploading || !completeTarget"
+                @click="submitCompleteWithoutPhoto"
+              >
+                跳过照片完成
+              </button>
+              <button
+                class="action-btn submit-btn"
+                :disabled="proofUploading || !completeTarget || !proofFile"
+                @click="submitCompleteWithPhoto"
+              >
+                {{ proofUploading ? '提交中...' : '上传并完成' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+
       <p v-if="error" class="error-msg">{{ error }}</p>
 
       <!-- Age picker popup -->
@@ -146,23 +268,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, reactive, onUnmounted } from 'vue'
+import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import OverlayPanel from './OverlayPanel.vue'
-import { useUiStore } from '@/stores/ui'
-import { useAuthStore } from '@/stores/auth'
+import { uploadPhoto } from '@/lib/api/photo'
 import {
+  completeTask,
+  getBabyAge,
   getDailyTasks,
   getPartnerTasks,
-  completeTask,
-  scoreTask,
-  rejectTask,
   getTaskStats,
-  getBabyAge,
+  rejectTask,
+  scoreTask,
   setBabyAge,
-  type UserTaskItem,
   type TaskStats,
+  type UserTaskItem,
 } from '@/lib/api/task'
 import { getErrorMessage } from '@/lib/apiClient'
+import { useAuthStore } from '@/stores/auth'
+import { useUiStore } from '@/stores/ui'
 
 const uiStore = useUiStore()
 const authStore = useAuthStore()
@@ -177,6 +300,113 @@ const completing = ref('')
 const scoring = ref('')
 const scoreMap = reactive<Record<string, { score: number; comment: string }>>({})
 let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const priorityRank: Record<string, number> = { T0: 3, T1: 2, T2: 1 }
+const statusRankDad: Record<string, number> = { pending: 3, completed: 2, verified: 1 }
+const statusRankMom: Record<string, number> = { completed: 3, pending: 2, verified: 1 }
+
+const sortedTasks = computed(() => {
+  const statusRank = isDad.value ? statusRankDad : statusRankMom
+  return [...tasks.value].sort((a, b) => {
+    const byStatus = (statusRank[b.status] ?? 0) - (statusRank[a.status] ?? 0)
+    if (byStatus !== 0) return byStatus
+    return (priorityRank[b.priority || 'T2'] ?? 0) - (priorityRank[a.priority || 'T2'] ?? 0)
+  })
+})
+
+function priorityLabel(priority?: string): string {
+  const p = (priority || 'T2').toUpperCase()
+  if (p === 'T0') return '紧急'
+  if (p === 'T1') return '里程碑'
+  return '日常'
+}
+
+function priorityTip(priority?: string): string {
+  const p = (priority || 'T2').toUpperCase()
+  if (p === 'T0') return 'T0: 突发/情绪干预'
+  if (p === 'T1') return 'T1: 关键里程碑'
+  return 'T2: 日常守护'
+}
+
+// Dad: complete task + optional proof photo
+const showCompleteDialog = ref(false)
+const completeTarget = ref<UserTaskItem | null>(null)
+const proofFile = ref<File | null>(null)
+const proofPreviewUrl = ref('')
+const proofUploading = ref(false)
+const completeDialogError = ref('')
+
+function resetProof() {
+  if (proofPreviewUrl.value) {
+    URL.revokeObjectURL(proofPreviewUrl.value)
+  }
+  proofFile.value = null
+  proofPreviewUrl.value = ''
+}
+
+function openCompleteDialog(task: UserTaskItem) {
+  if (!isDad.value) return
+  completeTarget.value = task
+  completeDialogError.value = ''
+  resetProof()
+  showCompleteDialog.value = true
+}
+
+function closeCompleteDialog() {
+  showCompleteDialog.value = false
+  completeTarget.value = null
+  completeDialogError.value = ''
+  resetProof()
+}
+
+function onProofFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0] ?? null
+  resetProof()
+  if (file) {
+    proofFile.value = file
+    proofPreviewUrl.value = URL.createObjectURL(file)
+  }
+  // Allow selecting the same file again
+  input.value = ''
+}
+
+async function submitCompleteWithoutPhoto() {
+  if (!completeTarget.value) return
+  const id = completeTarget.value.id
+  completing.value = id
+  proofUploading.value = true
+  completeDialogError.value = ''
+  try {
+    const updated = await completeTask(id)
+    tasks.value = tasks.value.map((t) => (t.id === id ? updated : t))
+    closeCompleteDialog()
+  } catch (e) {
+    completeDialogError.value = getErrorMessage(e)
+  } finally {
+    proofUploading.value = false
+    completing.value = ''
+  }
+}
+
+async function submitCompleteWithPhoto() {
+  if (!completeTarget.value || !proofFile.value) return
+  const id = completeTarget.value.id
+  completing.value = id
+  proofUploading.value = true
+  completeDialogError.value = ''
+  try {
+    const uploaded = await uploadPhoto(proofFile.value, `任务证明：${completeTarget.value.title}`)
+    const updated = await completeTask(id, { proof_photo_url: uploaded.image_url })
+    tasks.value = tasks.value.map((t) => (t.id === id ? updated : t))
+    closeCompleteDialog()
+  } catch (e) {
+    completeDialogError.value = getErrorMessage(e)
+  } finally {
+    proofUploading.value = false
+    completing.value = ''
+  }
+}
 
 const AGE_OPTIONS = [
   { value: 'pregnancy', label: '孕期' },
@@ -248,8 +478,10 @@ function initScoreMap(taskList: UserTaskItem[]) {
 
 function mergeTaskFields(existing: UserTaskItem, incoming: UserTaskItem) {
   if (existing.status !== incoming.status) existing.status = incoming.status
+  if (existing.priority !== incoming.priority) existing.priority = incoming.priority
   if (existing.score !== incoming.score) existing.score = incoming.score
   if (existing.comment !== incoming.comment) existing.comment = incoming.comment
+  if (existing.proof_photo_url !== incoming.proof_photo_url) existing.proof_photo_url = incoming.proof_photo_url
   if (existing.completed_at !== incoming.completed_at) existing.completed_at = incoming.completed_at
   if (existing.scored_at !== incoming.scored_at) existing.scored_at = incoming.scored_at
 }
@@ -312,19 +544,6 @@ watch(
     }
   },
 )
-
-async function onComplete(id: string) {
-  completing.value = id
-  error.value = ''
-  try {
-    const updated = await completeTask(id)
-    tasks.value = tasks.value.map((t) => (t.id === id ? updated : t))
-  } catch (e) {
-    error.value = getErrorMessage(e)
-  } finally {
-    completing.value = ''
-  }
-}
 
 function setScore(taskId: string, score: number) {
   if (!scoreMap[taskId]) scoreMap[taskId] = { score: 0, comment: '' }
@@ -434,12 +653,28 @@ function difficultyStars(d: number) {
 }
 
 .task-card {
+  position: relative;
   padding: 16px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 16px;
   transition: border-color 0.2s;
+  overflow: hidden;
 }
+
+.task-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.task-card.pri-T0::before { background: rgba(255, 90, 90, 0.8); }
+.task-card.pri-T1::before { background: rgba(90, 160, 255, 0.75); }
+.task-card.pri-T2::before { background: rgba(255, 255, 255, 0.08); }
 
 .task-card.status-completed {
   border-color: rgba(255, 200, 80, 0.3);
@@ -456,6 +691,23 @@ function difficultyStars(d: number) {
   justify-content: space-between;
   margin-bottom: 8px;
 }
+
+.task-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.priority-badge {
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.priority-badge.pri-T0 { background: rgba(255, 90, 90, 0.18); color: #ffb8b8; }
+.priority-badge.pri-T1 { background: rgba(90, 160, 255, 0.18); color: #b6d6ff; }
+.priority-badge.pri-T2 { background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.6); }
 
 .category-badge {
   padding: 2px 10px;
@@ -475,17 +727,48 @@ function difficultyStars(d: number) {
   letter-spacing: 2px;
 }
 
+.task-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.task-kv {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.task-k {
+  width: 56px;
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 1px;
+}
+
 .task-title {
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
-  margin-bottom: 4px;
+  margin: 0;
 }
 
 .task-desc {
   font-size: 13px;
   color: var(--text-secondary);
-  margin-bottom: 10px;
+  margin: 0;
+  line-height: 1.4;
+}
+
+.proof-thumb {
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .task-footer {
@@ -598,6 +881,140 @@ function difficultyStars(d: number) {
   font-size: 13px;
   color: var(--text-secondary);
   font-style: italic;
+}
+
+.complete-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 11;
+  border-radius: inherit;
+}
+
+.complete-dialog {
+  width: 320px;
+  max-width: 92%;
+  background: var(--surface-elevated, #2a2a3a);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 18px 16px 14px;
+}
+
+.complete-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.complete-subtitle {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.complete-actions {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.proof-picker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.proof-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.proof-picker-btn {
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.proof-picker-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.28);
+}
+
+.proof-preview {
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+
+.complete-error {
+  margin-top: 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: rgba(220, 60, 60, 0.15);
+  border: 1px solid rgba(220, 60, 60, 0.25);
+  border-radius: 10px;
+  color: #ffbbbb;
+  font-size: 13px;
+}
+
+.complete-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.cancel-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.skip-btn {
+  background: rgba(255, 160, 80, 0.22);
+  color: #ffc480;
+}
+
+.skip-btn:hover {
+  background: rgba(255, 160, 80, 0.3);
+}
+
+.submit-btn {
+  background: rgba(80, 200, 120, 0.8);
+  color: #fff;
+}
+
+.submit-btn:hover {
+  background: rgba(80, 200, 120, 1);
+}
+
+.complete-fade-enter-active,
+.complete-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.complete-fade-enter-from,
+.complete-fade-leave-to {
+  opacity: 0;
 }
 
 .error-msg {
