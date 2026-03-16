@@ -89,6 +89,26 @@ func (r *TaskRepo) SumScoreByUserID(userID string) (int, error) {
 	return *total, nil
 }
 
+func (r *TaskRepo) CountVerifiedTasksByUserID(userID string) (int, error) {
+	var count int64
+	err := r.db.Model(&model.UserTask{}).
+		Where("user_id = ? AND status = ?", userID, model.TaskVerified).
+		Count(&count).Error
+	if err != nil {
+		return 0, err
+	}
+	return int(count), nil
+}
+
+func (r *TaskRepo) FindVerifiedTasksByUserID(userID string) ([]model.UserTask, error) {
+	var tasks []model.UserTask
+	err := r.db.Preload("Task").
+		Where("user_id = ? AND status = ? AND score IS NOT NULL", userID, model.TaskVerified).
+		Order("scored_at asc").
+		Find(&tasks).Error
+	return tasks, err
+}
+
 // AI cache operations
 
 func (r *TaskRepo) FindAICache(coupleKey, date string) (*model.AIGeneratedTask, error) {

@@ -33,6 +33,7 @@ type Handlers struct {
 	Whisper     *handler.WhisperHandler
 	Task        *handler.TaskHandler
 	ShellGift   *handler.ShellGiftHandler
+	PerkCard    *handler.PerkCardHandler
 }
 
 func Setup(
@@ -207,6 +208,8 @@ func Setup(
 		tasks.POST("/:id/score", h.Task.Score)
 		tasks.POST("/:id/reject", h.Task.Reject)
 		tasks.GET("/stats", h.Task.Stats)
+		tasks.GET("/radar", h.Task.Radar)
+		tasks.GET("/achievements", h.Task.Achievements)
 		tasks.GET("/baby-age", h.Task.GetBabyAge)
 		tasks.PUT("/baby-age", h.Task.SetBabyAge)
 	}
@@ -216,6 +219,14 @@ func Setup(
 	{
 		shellGifts.GET("", h.ShellGift.List)
 		shellGifts.POST("/:id/open", h.ShellGift.Open)
+	}
+
+	// ==================== Perk Cards ====================
+	perkCards := api.Group("/perk-cards", middleware.AuthRequired(cfg))
+	{
+		perkCards.POST("", h.PerkCard.Create)
+		perkCards.GET("", h.PerkCard.List)
+		perkCards.POST("/:id/use", h.PerkCard.Use)
 	}
 
 	// ==================== Admin ====================

@@ -27,12 +27,16 @@ func Migrate(db *gorm.DB) error {
 		&model.UserTask{},
 		&model.AIGeneratedTask{},
 		&model.ShellGift{},
+		&model.Achievement{},
+		&model.UserAchievement{},
+		&model.PerkCard{},
 	); err != nil {
 		return err
 	}
 
 	// Seed default daily tasks if none exist
 	seedDailyTasks(db)
+	seedAchievements(db)
 
 	// Migrate legacy role='admin' users to is_admin flag
 	db.Model(&model.User{}).Where("role = ?", "admin").Updates(map[string]interface{}{
@@ -92,5 +96,38 @@ func seedDailyTasks(db *gorm.DB) {
 			tasks[i].Priority = model.PriorityT2
 		}
 		db.Create(&tasks[i])
+	}
+}
+
+func seedAchievements(db *gorm.DB) {
+	var count int64
+	db.Model(&model.Achievement{}).Count(&count)
+	if count > 0 {
+		return
+	}
+
+	achievements := []model.Achievement{
+		{
+			Code:        "aap_apprentice",
+			Title:       "AAP见习奶爸",
+			Description: "累计完成并验收 10 个任务",
+			Condition:   `{"type":"task_count","min":10}`,
+		},
+		{
+			Code:        "sleep_master",
+			Title:       "哄睡大师",
+			Description: "情绪安抚维度达到 20",
+			Condition:   `{"type":"dimension_min","dimension":"emotional","min":20}`,
+		},
+		{
+			Code:        "logistics_pro",
+			Title:       "后勤达人",
+			Description: "后勤保障维度达到 30",
+			Condition:   `{"type":"dimension_min","dimension":"logistics","min":30}`,
+		},
+	}
+
+	for i := range achievements {
+		db.Create(&achievements[i])
 	}
 }

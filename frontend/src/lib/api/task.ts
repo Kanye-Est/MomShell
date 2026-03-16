@@ -26,6 +26,25 @@ export interface BabyAgeResponse {
   source: string;
 }
 
+export interface SkillRadar {
+  nutrition: number;
+  cleaning: number;
+  emotional: number;
+  logistics: number;
+  health: number;
+  playtime: number;
+}
+
+export interface AchievementItem {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  icon_url: string;
+  unlocked: boolean;
+  unlocked_at: string | null;
+}
+
 export function getDailyTasks(): Promise<UserTaskItem[]> {
   return apiClient.get("/api/v1/tasks/daily").then((r) => r.data);
 }
@@ -61,6 +80,14 @@ export function rejectTask(
 
 export function getTaskStats(): Promise<TaskStats> {
   return apiClient.get("/api/v1/tasks/stats").then((r) => r.data);
+}
+
+export function getSkillRadar(): Promise<SkillRadar> {
+  return apiClient.get("/api/v1/tasks/radar").then((r) => r.data);
+}
+
+export function getAchievements(): Promise<AchievementItem[]> {
+  return apiClient.get("/api/v1/tasks/achievements").then((r) => r.data);
 }
 
 export function getBabyAge(): Promise<BabyAgeResponse> {

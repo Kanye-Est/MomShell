@@ -1,191 +1,285 @@
 <template>
   <OverlayPanel :visible="uiStore.activePanel === 'task'" position="center" @close="uiStore.closePanel()">
     <div class="task-panel">
-      <!-- Dad view: daily tasks -->
-      <template v-if="isDad">
-        <button class="age-menu-btn" @click="showAgeMenu = !showAgeMenu" title="修改宝宝年龄" aria-label="修改宝宝年龄" :aria-expanded="showAgeMenu">⋯</button>
-        <h2 class="panel-title">今日任务</h2>
-        <p class="panel-subtitle">
-          完成任务，一起成长
-          <span v-if="currentAge" class="age-badge">{{ ageLabel(currentAge) }}</span>
-        </p>
+      <button class="age-menu-btn" @click="showAgeMenu = !showAgeMenu" title="修改宝宝年龄" aria-label="修改宝宝年龄" :aria-expanded="showAgeMenu">⋯</button>
 
-        <!-- Stats bar -->
-        <div v-if="stats" class="stats-bar">
-          <span class="level-badge">Lv.{{ stats.level }}</span>
-          <span class="xp-text">{{ stats.xp }} XP</span>
-        </div>
+      <h2 class="panel-title">{{ headerTitle }}</h2>
+      <p class="panel-subtitle">
+        {{ headerSubtitle }}
+        <span v-if="currentAge" class="age-badge">{{ ageLabel(currentAge) }}</span>
+      </p>
 
-        <div v-if="loading" class="loading-state">{{ currentAge ? '正在生成任务...' : '加载中...' }}</div>
+      <!-- Stats bar -->
+      <div v-if="stats" class="stats-bar">
+        <span class="level-badge">Lv.{{ stats.level }}</span>
+        <span class="xp-text">{{ stats.xp }} XP</span>
+      </div>
 
-        <div v-else-if="tasks.length === 0" class="empty-state">今天没有任务</div>
+      <div class="panel-tabs">
+        <button
+          class="tab-btn"
+          :class="{ active: activeTab === 'board' }"
+          @click="activeTab = 'board'"
+        >
+          {{ isDad ? '任务面板' : '伴侣任务' }}
+        </button>
+        <button
+          class="tab-btn"
+          :class="{ active: activeTab === 'dashboard' }"
+          @click="activeTab = 'dashboard'"
+        >
+          战绩背包
+        </button>
+      </div>
 
-        <div v-else class="task-list">
-          <div
-            v-for="t in sortedTasks"
-            :key="t.id"
-            :class="[
-              'task-card',
-              `status-${t.status}`,
-              `pri-${t.priority || 'T2'}`,
-            ]"
-          >
-            <div class="task-header">
-              <div class="task-badges">
-                <span
-                  :class="['priority-badge', `pri-${t.priority || 'T2'}`]"
-                  :title="priorityTip(t.priority)"
+      <template v-if="activeTab === 'board'">
+        <!-- Dad view: daily tasks -->
+        <template v-if="isDad">
+          <div v-if="loading" class="loading-state">{{ currentAge ? '正在生成任务...' : '加载中...' }}</div>
+
+          <div v-else-if="tasks.length === 0" class="empty-state">今天没有任务</div>
+
+          <div v-else class="task-list">
+            <div
+              v-for="t in sortedTasks"
+              :key="t.id"
+              :class="[
+                'task-card',
+                `status-${t.status}`,
+                `pri-${t.priority || 'T2'}`,
+              ]"
+            >
+              <div class="task-header">
+                <div class="task-badges">
+                  <span
+                    :class="['priority-badge', `pri-${t.priority || 'T2'}`]"
+                    :title="priorityTip(t.priority)"
+                  >
+                    {{ priorityLabel(t.priority) }}
+                  </span>
+                  <span :class="['category-badge', `cat-${t.category}`]">
+                    {{ categoryLabel(t.category) }}
+                  </span>
+                </div>
+                <span class="difficulty">{{ difficultyStars(t.difficulty) }}</span>
+              </div>
+
+              <div class="task-body">
+                <div class="task-kv">
+                  <div class="task-k">做什么</div>
+                  <h3 class="task-title">{{ t.title }}</h3>
+                </div>
+                <div class="task-kv">
+                  <div class="task-k">怎么做</div>
+                  <p class="task-desc">{{ t.description }}</p>
+                </div>
+                <img
+                  v-if="t.proof_photo_url && t.status !== 'pending'"
+                  class="proof-thumb"
+                  :src="t.proof_photo_url"
+                  alt=""
+                  loading="lazy"
+                />
+              </div>
+
+              <div class="task-footer">
+                <span v-if="t.status === 'pending'" class="status-text pending">待完成</span>
+                <span v-else-if="t.status === 'completed'" class="status-text completed">已完成，等待验收</span>
+                <span v-else class="status-text verified">已验收 {{ t.score }}/5</span>
+                <button
+                  v-if="t.status === 'pending'"
+                  class="action-btn complete-btn"
+                  :disabled="completing === t.id"
+                  @click="openCompleteDialog(t)"
                 >
-                  {{ priorityLabel(t.priority) }}
-                </span>
-                <span :class="['category-badge', `cat-${t.category}`]">
-                  {{ categoryLabel(t.category) }}
-                </span>
+                  {{ completing === t.id ? '...' : '完成' }}
+                </button>
               </div>
-              <span class="difficulty">{{ difficultyStars(t.difficulty) }}</span>
+              <p v-if="t.comment && t.status === 'verified'" class="score-comment">{{ t.comment }}</p>
             </div>
-
-            <div class="task-body">
-              <div class="task-kv">
-                <div class="task-k">做什么</div>
-                <h3 class="task-title">{{ t.title }}</h3>
-              </div>
-              <div class="task-kv">
-                <div class="task-k">怎么做</div>
-                <p class="task-desc">{{ t.description }}</p>
-              </div>
-              <img
-                v-if="t.proof_photo_url && t.status !== 'pending'"
-                class="proof-thumb"
-                :src="t.proof_photo_url"
-                alt=""
-                loading="lazy"
-              />
-            </div>
-
-            <div class="task-footer">
-              <span v-if="t.status === 'pending'" class="status-text pending">待完成</span>
-              <span v-else-if="t.status === 'completed'" class="status-text completed">已完成，等待验收</span>
-              <span v-else class="status-text verified">已验收 {{ t.score }}/5</span>
-              <button
-                v-if="t.status === 'pending'"
-                class="action-btn complete-btn"
-                :disabled="completing === t.id"
-                @click="openCompleteDialog(t)"
-              >
-                {{ completing === t.id ? '...' : '完成' }}
-              </button>
-            </div>
-            <p v-if="t.comment && t.status === 'verified'" class="score-comment">{{ t.comment }}</p>
           </div>
-        </div>
+        </template>
+
+        <!-- Mom view: partner tasks review -->
+        <template v-else>
+          <div v-if="loading" class="loading-state">{{ currentAge ? '正在生成任务...' : '加载中...' }}</div>
+
+          <div v-else-if="tasks.length === 0" class="empty-state">今天还没有任务</div>
+
+          <div v-else class="task-list">
+            <div
+              v-for="t in sortedTasks"
+              :key="t.id"
+              :class="[
+                'task-card',
+                `status-${t.status}`,
+                `pri-${t.priority || 'T2'}`,
+              ]"
+            >
+              <div class="task-header">
+                <div class="task-badges">
+                  <span
+                    :class="['priority-badge', `pri-${t.priority || 'T2'}`]"
+                    :title="priorityTip(t.priority)"
+                  >
+                    {{ priorityLabel(t.priority) }}
+                  </span>
+                  <span :class="['category-badge', `cat-${t.category}`]">
+                    {{ categoryLabel(t.category) }}
+                  </span>
+                </div>
+                <span class="difficulty">{{ difficultyStars(t.difficulty) }}</span>
+              </div>
+
+              <div class="task-body">
+                <div class="task-kv">
+                  <div class="task-k">做什么</div>
+                  <h3 class="task-title">{{ t.title }}</h3>
+                </div>
+                <div class="task-kv">
+                  <div class="task-k">怎么做</div>
+                  <p class="task-desc">{{ t.description }}</p>
+                </div>
+                <img
+                  v-if="t.proof_photo_url && t.status !== 'pending'"
+                  class="proof-thumb"
+                  :src="t.proof_photo_url"
+                  alt=""
+                  loading="lazy"
+                />
+              </div>
+
+              <div class="task-footer">
+                <span v-if="t.status === 'pending'" class="status-text pending">未完成</span>
+                <span v-else-if="t.status === 'completed'" class="status-text completed">待验收</span>
+                <span v-else class="status-text verified">已验收 {{ t.score }}/5</span>
+              </div>
+
+              <!-- Score UI for completed tasks -->
+              <div v-if="t.status === 'completed'" class="score-section">
+                <div class="score-stars">
+                  <button
+                    v-for="s in 5"
+                    :key="s"
+                    :class="['star-btn', { active: (scoreMap[t.id]?.score ?? 0) >= s }]"
+                    @click="setScore(t.id, s)"
+                  >
+                    {{ (scoreMap[t.id]?.score ?? 0) >= s ? '★' : '☆' }}
+                  </button>
+                </div>
+                <input
+                  v-model="scoreMap[t.id]!.comment"
+                  class="score-input"
+                  placeholder="留一句评价..."
+                  maxlength="500"
+                />
+                <div class="score-actions">
+                  <button
+                    class="action-btn reject-btn"
+                    :disabled="scoring === t.id"
+                    @click="onReject(t.id)"
+                  >
+                    {{ scoring === t.id ? '...' : '未完成' }}
+                  </button>
+                  <button
+                    class="action-btn score-btn"
+                    :disabled="scoring === t.id || !(scoreMap[t.id]?.score)"
+                    @click="onScore(t.id)"
+                  >
+                    {{ scoring === t.id ? '提交中...' : '验收' }}
+                  </button>
+                </div>
+              </div>
+
+              <p v-if="t.comment && t.status === 'verified'" class="score-comment">{{ t.comment }}</p>
+            </div>
+          </div>
+        </template>
       </template>
 
-      <!-- Mom view: partner tasks review -->
       <template v-else>
-        <button class="age-menu-btn" @click="showAgeMenu = !showAgeMenu" title="修改宝宝年龄" aria-label="修改宝宝年龄" :aria-expanded="showAgeMenu">⋯</button>
-        <h2 class="panel-title">伴侣任务</h2>
-        <p class="panel-subtitle">
-          查看他的完成情况
-          <span v-if="currentAge" class="age-badge">{{ ageLabel(currentAge) }}</span>
-        </p>
+        <div v-if="loadingDashboard" class="loading-state">加载中...</div>
+        <div v-else-if="dashboardError" class="error-msg">{{ dashboardError }}</div>
+        <div v-else class="dashboard">
+          <SkillRadarChart v-if="skillRadar" :values="skillRadar" />
 
-        <!-- Stats bar -->
-        <div v-if="stats" class="stats-bar">
-          <span class="level-badge">Lv.{{ stats.level }}</span>
-          <span class="xp-text">{{ stats.xp }} XP</span>
-        </div>
-
-        <div v-if="loading" class="loading-state">{{ currentAge ? '正在生成任务...' : '加载中...' }}</div>
-
-        <div v-else-if="tasks.length === 0" class="empty-state">今天还没有任务</div>
-
-        <div v-else class="task-list">
-          <div
-            v-for="t in sortedTasks"
-            :key="t.id"
-            :class="[
-              'task-card',
-              `status-${t.status}`,
-              `pri-${t.priority || 'T2'}`,
-            ]"
-          >
-            <div class="task-header">
-              <div class="task-badges">
-                <span
-                  :class="['priority-badge', `pri-${t.priority || 'T2'}`]"
-                  :title="priorityTip(t.priority)"
-                >
-                  {{ priorityLabel(t.priority) }}
-                </span>
-                <span :class="['category-badge', `cat-${t.category}`]">
-                  {{ categoryLabel(t.category) }}
-                </span>
+          <div class="dash-section">
+            <div class="dash-title-row">
+              <h3 class="dash-title">徽章</h3>
+              <span v-if="unlockedCount > 0" class="dash-hint">{{ unlockedCount }}/{{ achievements.length }}</span>
+            </div>
+            <div v-if="achievements.length === 0" class="empty-state">暂无徽章</div>
+            <div v-else class="ach-grid">
+              <div
+                v-for="a in sortedAchievements"
+                :key="a.id"
+                :class="['ach-card', { unlocked: a.unlocked }]"
+              >
+                <div class="ach-icon" :style="{ backgroundImage: a.icon_url ? `url(${a.icon_url})` : undefined }" />
+                <div class="ach-body">
+                  <div class="ach-name">{{ a.title }}</div>
+                  <div class="ach-desc">{{ a.description }}</div>
+                </div>
+                <div :class="['ach-status', a.unlocked ? 'ok' : 'locked']">{{ a.unlocked ? '已解锁' : '未解锁' }}</div>
               </div>
-              <span class="difficulty">{{ difficultyStars(t.difficulty) }}</span>
+            </div>
+          </div>
+
+          <div class="dash-section">
+            <div class="dash-title-row">
+              <h3 class="dash-title">权益背包</h3>
+              <button v-if="!isDad" class="mini-btn" @click="showPerkIssue = !showPerkIssue">
+                {{ showPerkIssue ? '收起' : '发放' }}
+              </button>
             </div>
 
-            <div class="task-body">
-              <div class="task-kv">
-                <div class="task-k">做什么</div>
-                <h3 class="task-title">{{ t.title }}</h3>
-              </div>
-              <div class="task-kv">
-                <div class="task-k">怎么做</div>
-                <p class="task-desc">{{ t.description }}</p>
-              </div>
-              <img
-                v-if="t.proof_photo_url && t.status !== 'pending'"
-                class="proof-thumb"
-                :src="t.proof_photo_url"
-                alt=""
-                loading="lazy"
-              />
-            </div>
-
-            <div class="task-footer">
-              <span v-if="t.status === 'pending'" class="status-text pending">未完成</span>
-              <span v-else-if="t.status === 'completed'" class="status-text completed">待验收</span>
-              <span v-else class="status-text verified">已验收 {{ t.score }}/5</span>
-            </div>
-
-            <!-- Score UI for completed tasks -->
-            <div v-if="t.status === 'completed'" class="score-section">
-              <div class="score-stars">
+            <div v-if="showPerkIssue" class="perk-issue">
+              <div class="perk-presets">
                 <button
-                  v-for="s in 5"
-                  :key="s"
-                  :class="['star-btn', { active: (scoreMap[t.id]?.score ?? 0) >= s }]"
-                  @click="setScore(t.id, s)"
+                  v-for="p in PERK_PRESETS"
+                  :key="p.title"
+                  class="preset-btn"
+                  @click="applyPerkPreset(p)"
                 >
-                  {{ (scoreMap[t.id]?.score ?? 0) >= s ? '★' : '☆' }}
+                  {{ p.title }}
                 </button>
               </div>
-              <input
-                v-model="scoreMap[t.id]!.comment"
-                class="score-input"
-                placeholder="留一句评价..."
-                maxlength="500"
-              />
-              <div class="score-actions">
-                <button
-                  class="action-btn reject-btn"
-                  :disabled="scoring === t.id"
-                  @click="onReject(t.id)"
-                >
-                  {{ scoring === t.id ? '...' : '未完成' }}
-                </button>
-                <button
-                  class="action-btn score-btn"
-                  :disabled="scoring === t.id || !(scoreMap[t.id]?.score)"
-                  @click="onScore(t.id)"
-                >
-                  {{ scoring === t.id ? '提交中...' : '验收' }}
+              <input v-model="perkForm.title" class="perk-input" placeholder="权益标题" maxlength="100" />
+              <textarea v-model="perkForm.description" class="perk-textarea" placeholder="权益说明（可选）" maxlength="500" />
+              <div class="perk-actions">
+                <button class="action-btn cancel-btn" :disabled="creatingPerk" @click="showPerkIssue = false">取消</button>
+                <button class="action-btn submit-btn" :disabled="creatingPerk || !perkForm.title.trim()" @click="onCreatePerk">
+                  {{ creatingPerk ? '发放中...' : '确认发放' }}
                 </button>
               </div>
+              <p v-if="perkIssueError" class="error-msg">{{ perkIssueError }}</p>
             </div>
 
-            <p v-if="t.comment && t.status === 'verified'" class="score-comment">{{ t.comment }}</p>
+            <div v-if="perkCards.length === 0" class="empty-state">{{ isDad ? '暂无权益卡' : '还没有发放权益卡' }}</div>
+            <div v-else class="perk-list">
+              <div v-for="c in perkCards" :key="c.id" :class="['perk-card', `st-${c.status}`]">
+                <div class="perk-top">
+                  <div class="perk-title">{{ c.title }}</div>
+                  <div class="perk-status">{{ perkStatusLabel(c.status) }}</div>
+                </div>
+                <div v-if="c.description" class="perk-desc">{{ c.description }}</div>
+                <div class="perk-footer">
+                  <div class="perk-time">
+                    <span v-if="c.status === 'used' && c.used_at">已核销</span>
+                    <span v-else-if="c.status === 'expired'">已过期</span>
+                    <span v-else>可使用</span>
+                  </div>
+                  <button
+                    v-if="isDad && c.status === 'active'"
+                    class="action-btn score-btn"
+                    :disabled="usingPerk === c.id"
+                    @click="onUsePerk(c.id)"
+                  >
+                    {{ usingPerk === c.id ? '...' : '使用' }}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </template>
@@ -242,7 +336,7 @@
         </div>
       </Transition>
 
-      <p v-if="error" class="error-msg">{{ error }}</p>
+      <p v-if="activeTab === 'board' && error" class="error-msg">{{ error }}</p>
 
       <!-- Age picker popup -->
       <Transition name="age-fade">
@@ -270,20 +364,26 @@
 <script setup lang="ts">
 import { computed, onUnmounted, reactive, ref, watch } from 'vue'
 import OverlayPanel from './OverlayPanel.vue'
+import SkillRadarChart from '@/components/task/SkillRadarChart.vue'
 import { uploadPhoto } from '@/lib/api/photo'
 import {
   completeTask,
+  getAchievements,
   getBabyAge,
   getDailyTasks,
   getPartnerTasks,
+  getSkillRadar,
   getTaskStats,
   rejectTask,
   scoreTask,
   setBabyAge,
+  type AchievementItem,
+  type SkillRadar,
   type TaskStats,
   type UserTaskItem,
 } from '@/lib/api/task'
 import { getErrorMessage } from '@/lib/apiClient'
+import { createPerkCard, getPerkCards, usePerkCard, type PerkCardItem } from '@/lib/api/perkCard'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
 
@@ -291,6 +391,9 @@ const uiStore = useUiStore()
 const authStore = useAuthStore()
 
 const isDad = computed(() => authStore.user?.role === 'dad')
+
+type TaskTab = 'board' | 'dashboard'
+const activeTab = ref<TaskTab>('board')
 
 const tasks = ref<UserTaskItem[]>([])
 const stats = ref<TaskStats | null>(null)
@@ -300,6 +403,16 @@ const completing = ref('')
 const scoring = ref('')
 const scoreMap = reactive<Record<string, { score: number; comment: string }>>({})
 let pollTimer: ReturnType<typeof setInterval> | null = null
+
+const headerTitle = computed(() => {
+  if (activeTab.value === 'dashboard') return '战绩与背包'
+  return isDad.value ? '今日任务' : '伴侣任务'
+})
+
+const headerSubtitle = computed(() => {
+  if (activeTab.value === 'dashboard') return isDad.value ? '成长数据与权益核销' : '他的成长数据与权益记录'
+  return isDad.value ? '完成任务，一起成长' : '查看他的完成情况'
+})
 
 const priorityRank: Record<string, number> = { T0: 3, T1: 2, T2: 1 }
 const statusRankDad: Record<string, number> = { pending: 3, completed: 2, verified: 1 }
@@ -326,6 +439,106 @@ function priorityTip(priority?: string): string {
   if (p === 'T0') return 'T0: 突发/情绪干预'
   if (p === 'T1') return 'T1: 关键里程碑'
   return 'T2: 日常守护'
+}
+
+// ── Dashboard (radar + achievements + perk cards) ──────────────────────────────
+const loadingDashboard = ref(false)
+const dashboardError = ref('')
+const skillRadar = ref<SkillRadar | null>(null)
+const achievements = ref<AchievementItem[]>([])
+const perkCards = ref<PerkCardItem[]>([])
+const usingPerk = ref('')
+
+const unlockedCount = computed(() => achievements.value.filter((a) => a.unlocked).length)
+
+const sortedAchievements = computed(() => {
+  return [...achievements.value].sort((a, b) => {
+    if (a.unlocked === b.unlocked) return a.title.localeCompare(b.title, 'zh-Hans-CN')
+    return a.unlocked ? -1 : 1
+  })
+})
+
+async function fetchDashboard() {
+  loadingDashboard.value = true
+  dashboardError.value = ''
+  try {
+    const [radar, achList, cards] = await Promise.all([
+      getSkillRadar(),
+      getAchievements(),
+      getPerkCards(),
+    ])
+    skillRadar.value = radar
+    achievements.value = achList
+    perkCards.value = cards
+  } catch (e) {
+    dashboardError.value = getErrorMessage(e)
+  } finally {
+    loadingDashboard.value = false
+  }
+}
+
+function perkStatusLabel(status: string): string {
+  if (status === 'active') return '可用'
+  if (status === 'used') return '已使用'
+  if (status === 'expired') return '已过期'
+  return status
+}
+
+async function onUsePerk(id: string) {
+  usingPerk.value = id
+  dashboardError.value = ''
+  try {
+    const updated = await usePerkCard(id)
+    perkCards.value = perkCards.value.map((c) => (c.id === id ? updated : c))
+  } catch (e) {
+    dashboardError.value = getErrorMessage(e)
+  } finally {
+    usingPerk.value = ''
+  }
+}
+
+const showPerkIssue = ref(false)
+const creatingPerk = ref(false)
+const perkIssueError = ref('')
+const perkForm = reactive<{ title: string; description: string; icon_type: string }>({
+  title: '',
+  description: '',
+  icon_type: '',
+})
+
+const PERK_PRESETS = [
+  { title: '2小时免带娃放风券', description: '爸爸开启 2 小时免打扰模式。', icon_type: 'free_time' },
+  { title: '整觉免战牌', description: '今晚爸爸免夜战，直接整觉。', icon_type: 'sleep' },
+  { title: '一餐外卖自由券', description: '今晚这餐随你点，爸爸负责买单。', icon_type: 'food' },
+] as const
+
+function applyPerkPreset(p: (typeof PERK_PRESETS)[number]) {
+  perkForm.title = p.title
+  perkForm.description = p.description
+  perkForm.icon_type = p.icon_type
+}
+
+async function onCreatePerk() {
+  creatingPerk.value = true
+  perkIssueError.value = ''
+  try {
+    const title = perkForm.title.trim()
+    const description = perkForm.description.trim()
+    await createPerkCard({
+      title,
+      description: description || undefined,
+      icon_type: perkForm.icon_type || undefined,
+    })
+    showPerkIssue.value = false
+    perkForm.title = ''
+    perkForm.description = ''
+    perkForm.icon_type = ''
+    perkCards.value = await getPerkCards()
+  } catch (e) {
+    perkIssueError.value = getErrorMessage(e)
+  } finally {
+    creatingPerk.value = false
+  }
 }
 
 // Dad: complete task + optional proof photo
@@ -529,7 +742,11 @@ watch(
   () => uiStore.activePanel,
   async (panel) => {
     if (panel === 'task') {
+      activeTab.value = 'board'
       error.value = ''
+      dashboardError.value = ''
+      perkIssueError.value = ''
+      showPerkIssue.value = false
       loading.value = true
       try {
         await Promise.all([fetchTasks(), fetchBabyAge()])
@@ -542,6 +759,19 @@ watch(
     } else {
       stopPolling()
     }
+  },
+)
+
+watch(
+  () => activeTab.value,
+  async (tab) => {
+    if (uiStore.activePanel !== 'task') return
+    if (tab === 'board') {
+      startPolling()
+      return
+    }
+    stopPolling()
+    await fetchDashboard()
   },
 )
 
@@ -632,6 +862,44 @@ function difficultyStars(d: number) {
   margin-bottom: 20px;
 }
 
+.panel-tabs {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 16px;
+  padding: 4px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tab-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 10px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, transform 0.15s;
+}
+
+.tab-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tab-btn:active {
+  transform: scale(0.98);
+}
+
+.tab-btn.active {
+  background: rgba(255, 200, 80, 0.14);
+  color: #ffd080;
+}
+
 .level-badge {
   padding: 4px 14px;
   background: var(--accent-warm);
@@ -650,6 +918,250 @@ function difficultyStars(d: number) {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.dash-section {
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.dash-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.dash-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+  letter-spacing: 1px;
+}
+
+.dash-hint {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mini-btn {
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.ach-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.ach-card {
+  display: grid;
+  grid-template-columns: 42px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ach-card.unlocked {
+  border-color: rgba(255, 200, 80, 0.18);
+  background: rgba(255, 200, 80, 0.06);
+}
+
+.ach-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background-size: cover;
+  background-position: center;
+}
+
+.ach-body {
+  min-width: 0;
+}
+
+.ach-name {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ach-desc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ach-status {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ach-status.ok {
+  background: rgba(80, 200, 120, 0.16);
+  color: #a8f0c0;
+}
+
+.ach-status.locked {
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.perk-issue {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.perk-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.preset-btn {
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.preset-btn:hover {
+  background: rgba(255, 200, 80, 0.1);
+  border-color: rgba(255, 200, 80, 0.22);
+}
+
+.perk-input,
+.perk-textarea {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  outline: none;
+  font-size: 14px;
+}
+
+.perk-textarea {
+  min-height: 84px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.perk-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.perk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.perk-card {
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.perk-card.st-active {
+  border-color: rgba(255, 200, 80, 0.18);
+}
+
+.perk-card.st-used {
+  opacity: 0.78;
+}
+
+.perk-card.st-expired {
+  opacity: 0.6;
+}
+
+.perk-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.perk-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.perk-status {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.perk-desc {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+
+.perk-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.perk-time {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  font-weight: 700;
 }
 
 .task-card {

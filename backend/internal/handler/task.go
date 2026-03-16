@@ -12,11 +12,15 @@ import (
 )
 
 type TaskHandler struct {
-	taskService *service.TaskService
+	taskService        *service.TaskService
+	achievementService *service.AchievementService
 }
 
-func NewTaskHandler(taskService *service.TaskService) *TaskHandler {
-	return &TaskHandler{taskService: taskService}
+func NewTaskHandler(taskService *service.TaskService, achievementService *service.AchievementService) *TaskHandler {
+	return &TaskHandler{
+		taskService:        taskService,
+		achievementService: achievementService,
+	}
 }
 
 // GET /api/v1/tasks/daily
@@ -166,4 +170,26 @@ func (h *TaskHandler) SetBabyAge(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+// GET /api/v1/tasks/radar
+func (h *TaskHandler) Radar(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	radar, err := h.achievementService.GetSkillRadar(userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, radar)
+}
+
+// GET /api/v1/tasks/achievements
+func (h *TaskHandler) Achievements(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	items, err := h.achievementService.GetAchievements(userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, items)
 }

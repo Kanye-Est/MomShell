@@ -20,11 +20,12 @@ const (
 )
 
 type TaskService struct {
-	taskRepo         *repository.TaskRepo
-	userRepo         *repository.UserRepo
-	chatRepo         *repository.ChatRepo
-	openaiClient     *openai.Client
-	shellGiftService *ShellGiftService
+	taskRepo           *repository.TaskRepo
+	userRepo           *repository.UserRepo
+	chatRepo           *repository.ChatRepo
+	openaiClient       *openai.Client
+	shellGiftService   *ShellGiftService
+	achievementService *AchievementService
 }
 
 func NewTaskService(
@@ -33,13 +34,15 @@ func NewTaskService(
 	chatRepo *repository.ChatRepo,
 	openaiClient *openai.Client,
 	shellGiftService *ShellGiftService,
+	achievementService *AchievementService,
 ) *TaskService {
 	return &TaskService{
-		taskRepo:         taskRepo,
-		userRepo:         userRepo,
-		chatRepo:         chatRepo,
-		openaiClient:     openaiClient,
-		shellGiftService: shellGiftService,
+		taskRepo:           taskRepo,
+		userRepo:           userRepo,
+		chatRepo:           chatRepo,
+		openaiClient:       openaiClient,
+		shellGiftService:   shellGiftService,
+		achievementService: achievementService,
 	}
 }
 
@@ -192,6 +195,12 @@ func (s *TaskService) ScoreTask(callerID, taskID string, req dto.TaskScore) (*dt
 
 	if err := s.taskRepo.UpdateUserTask(ut); err != nil {
 		return nil, err
+	}
+
+	if s.achievementService != nil {
+		if err := s.achievementService.CheckAndUnlock(ut.UserID); err != nil {
+			log.Printf("[TaskService] achievement check failed: %v", err)
+		}
 	}
 
 	item := toTaskItem(*ut)
