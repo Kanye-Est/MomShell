@@ -662,16 +662,9 @@ function initScoreMap(taskList: UserTaskItem[]) {
 }
 
 async function pollTasks() {
+  if (loading.value || scoring.value || completing.value) return
   try {
-    const [taskList, taskStats] = await Promise.all([
-      isDad.value ? getDailyTasks() : getPartnerTasks(),
-      getTaskStats(),
-    ])
-    tasks.value = taskList
-    if (stats.value?.xp !== taskStats.xp || stats.value?.level !== taskStats.level) {
-      stats.value = taskStats
-    }
-    initScoreMap(taskList)
+    await fetchTasks()
   } catch {
     // Silently ignore poll errors
   }
@@ -708,7 +701,7 @@ watch(
       } finally {
         loading.value = false
       }
-      startPolling()
+      if (uiStore.activePanel === 'task' && activeTab.value === 'board') startPolling()
     } else {
       stopPolling()
     }

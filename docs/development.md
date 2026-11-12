@@ -15,7 +15,8 @@ See [Getting Started](getting-started.md) for installation links.
 ### Automated (Recommended)
 
 ```bash
-git clone https://github.com/koishi510/MomShell.git
+git lfs install
+git clone https://github.com/Kanye-Est/MomShell.git
 cd MomShell
 ./scripts/dev-setup.sh
 ```
@@ -26,13 +27,15 @@ cd MomShell
 cp .env.example .env   # Edit with your config
 
 cd backend && go mod download && cd ..
-cd frontend && npm install && cd ..
+cd frontend && npm ci --ignore-scripts && cd ..
 
 # Optional: install git hooks
 pre-commit install
 ```
 
 ## Running Locally
+
+Start the database configured in the project `.env` first.
 
 ### Using Make
 
@@ -49,7 +52,7 @@ make dev-tmux       # Or both in tmux
 cd backend && go run cmd/server/main.go
 
 # Frontend
-cd frontend && npx vite
+cd frontend && npm run dev
 ```
 
 ## Common Commands
@@ -63,6 +66,8 @@ make check         # lint + typecheck
 make build-backend   # Build Go binary
 make build-frontend  # Vite production build
 ```
+
+To regenerate the sand texture, run `npm run render-sand` from `frontend`. Set `PUPPETEER_EXECUTABLE_PATH` to a local Chromium executable, or first run `npx puppeteer browsers install chrome`. Pass an output path after `--` to render a separate file.
 
 ## Contributing
 

@@ -99,7 +99,7 @@ type UserTask struct {
 
 	// Relationships
 	User     User       `gorm:"foreignKey:UserID" json:"user,omitempty"`
-	Task     *DailyTask `gorm:"foreignKey:TaskID" json:"task,omitempty"`
+	Task     *DailyTask `gorm:"foreignKey:TaskID;-:migration" json:"task,omitempty"`
 	ScoredBy *User      `gorm:"foreignKey:ScoredByID" json:"scored_by,omitempty"`
 }
 

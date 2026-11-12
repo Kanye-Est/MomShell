@@ -11,12 +11,15 @@ import (
 	"github.com/momshell/backend/internal/model"
 	"github.com/momshell/backend/internal/repository"
 	"github.com/momshell/backend/pkg/openai"
+	"gorm.io/gorm"
 )
 
 const (
 	errUserNotFound    = "用户不存在"
 	errPartnerRequired = "请先完成伴侣绑定"
 	errTaskNotFound    = "任务不存在"
+	errTaskChanged     = "任务状态已更新，请刷新后重试"
+	dailyTaskCount     = 4
 )
 
 type TaskService struct {
@@ -100,7 +103,7 @@ func (s *TaskService) CompleteTask(userID, taskID string, proofPhotoURL *string)
 		ut.ProofPhotoURL = proofPhotoURL
 	}
 
-	if err := s.taskRepo.UpdateUserTask(ut); err != nil {
+	if err := s.updateTaskStatus(ut, model.TaskPending); err != nil {
 		return nil, err
 	}
 
@@ -192,7 +195,7 @@ func (s *TaskService) ScoreTask(callerID, taskID string, req dto.TaskScore) (*dt
 	ut.ScoredByID = &callerID
 	ut.ScoredAt = &now
 
-	if err := s.taskRepo.UpdateUserTask(ut); err != nil {
+	if err := s.updateTaskStatus(ut, model.TaskCompleted); err != nil {
 		return nil, err
 	}
 
@@ -202,7 +205,7 @@ func (s *TaskService) ScoreTask(callerID, taskID string, req dto.TaskScore) (*dt
 		}
 	}
 
-	if s.openaiClient != nil && s.photoRepo != nil && s.imageModel != "" {
+	if s.openaiClient.Enabled() && s.photoRepo != nil && s.imageModel != "" {
 		verifiedCopy := *ut
 		go func() {
 			if err := s.generateVerifiedTaskCardPhoto(callerID, verifiedCopy); err != nil {
@@ -227,7 +230,7 @@ func (s *TaskService) RegenerateTaskCard(callerID, taskID string) error {
 		return err
 	}
 
-	if s.openaiClient == nil || s.photoRepo == nil || s.imageModel == "" {
+	if !s.openaiClient.Enabled() || s.photoRepo == nil || s.imageModel == "" {
 		return errors.New("AI 绘图服务未配置，无法生成卡片")
 	}
 
@@ -260,12 +263,20 @@ func (s *TaskService) RejectTask(callerID, taskID string, comment string) (*dto.
 		ut.Comment = &comment
 	}
 
-	if err := s.taskRepo.ResetUserTaskToPending(ut); err != nil {
+	if err := s.updateTaskStatus(ut, model.TaskCompleted); err != nil {
 		return nil, err
 	}
 
 	item := toTaskItem(*ut)
 	return &item, nil
+}
+
+func (s *TaskService) updateTaskStatus(task *model.UserTask, previousStatus model.TaskStatus) error {
+	err := s.taskRepo.UpdateUserTask(task, previousStatus)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return errors.New(errTaskChanged)
+	}
+	return err
 }
 
 // GetTaskStats returns XP and level for a user (Dad).
@@ -372,8 +383,26 @@ func (s *TaskService) SetBabyAge(userID, ageStage string) error {
 		return errors.New(errUserNotFound)
 	}
 
-	user.BabyAgeStage = &ageStage
-	if err := s.userRepo.Update(user); err != nil {
+	taskOwner := userID
+	family := []string{userID}
+	if user.PartnerID != nil {
+		family = append(family, *user.PartnerID)
+		if user.Role == model.RoleMom {
+			taskOwner = *user.PartnerID
+		}
+	}
+
+	if err := s.taskRepo.WithDailyTaskLock(taskOwner, func(tx *gorm.DB) error {
+		if err := tx.Model(&model.User{}).Where("id IN ?", family).Update("baby_age_stage", ageStage).Error; err != nil {
+			return err
+		}
+		if user.PartnerID == nil {
+			return nil
+		}
+		key := coupleKey(userID, *user.PartnerID)
+		return repository.NewTaskRepo(tx).DeleteAICacheByCouple(key, today().Format("2006-01-02"), "future-letter-template")
+	}); err != nil {
+		log.Printf("[TaskService] Could not update baby age: %v", err)
 		return fmt.Errorf("保存失败，请重试")
 	}
 

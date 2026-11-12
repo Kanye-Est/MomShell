@@ -33,7 +33,7 @@ check: lint typecheck ## Run all checks (lint + typecheck)
 
 install: ## Install npm dependencies
 	@echo "$(CYAN)Installing dependencies...$(RESET)"
-	npm install
+	npm ci --ignore-scripts
 	@echo "$(GREEN)Dependencies installed$(RESET)"
 
 build: ## Build for production
@@ -50,7 +50,7 @@ docker-build: ## Build Docker image
 
 docker-run: ## Run Docker container
 	@echo "$(CYAN)Starting container on http://localhost:80$(RESET)"
-	docker run --rm -p 80:80 momshell-frontend
+	docker run --rm --add-host=host.docker.internal:host-gateway -p 80:80 momshell-frontend
 
 ##@ Cleanup
 

@@ -18,6 +18,11 @@ type GenerateMemoirRequest struct {
 	Theme *string `json:"theme" binding:"omitempty,max=100"`
 }
 
+type GenerateMemoirResponse struct {
+	*model.Memoir
+	ImageGenerationEnabled bool `json:"image_generation_enabled"`
+}
+
 type MemoirListResponse struct {
 	Memoirs []model.Memoir `json:"memoirs"`
 	Total   int64          `json:"total"`

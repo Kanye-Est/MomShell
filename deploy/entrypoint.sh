@@ -1,117 +1,87 @@
 #!/bin/sh
-set -e
+set -eu
 
-PG_USER="${POSTGRES_USER:-momshell}"
-PG_PASS="${POSTGRES_PASSWORD:-momshell}"
-PG_DB="${POSTGRES_DB:-momshell}"
+export PG_DATA=/var/lib/postgresql/data
+backend_pid=
+nginx_pid=
+embedded_pg_started=false
 
-# Start embedded PostgreSQL if DATABASE_URL is not set,
-# or if it points to localhost but PostgreSQL is not running.
-start_embedded_pg() {
-  PG_DATA="/var/lib/postgresql/data"
-
-  # Initialize PostgreSQL if needed
-  if [ ! -s "$PG_DATA/PG_VERSION" ]; then
-    echo "[entrypoint] Initializing PostgreSQL data directory..."
-    mkdir -p "$PG_DATA"
-    chown postgres:postgres "$PG_DATA"
-    su -s /bin/sh postgres -c "initdb -D $PG_DATA --no-locale --encoding=UTF8"
-    # Allow local connections without password + md5 for TCP
-    printf 'local all all trust\nhost all all 127.0.0.1/32 md5\nhost all all ::1/128 md5\n' > "$PG_DATA/pg_hba.conf"
-    chown postgres:postgres "$PG_DATA/pg_hba.conf"
-    # Tune for container environments with limited /dev/shm
-    cat >> "$PG_DATA/postgresql.conf" <<'PGCONF'
-# Container-friendly settings (appended by entrypoint)
-shared_buffers = 32MB
-dynamic_shared_memory_type = posix
-PGCONF
-    chown postgres:postgres "$PG_DATA/postgresql.conf"
+cleanup() {
+  if [ -n "$nginx_pid" ]; then
+    kill -QUIT "$nginx_pid" 2>/dev/null || true
+    wait "$nginx_pid" 2>/dev/null || true
   fi
-
-  # Ensure runtime directories exist
-  mkdir -p /run/postgresql
-  chown postgres:postgres /run/postgresql
-
-  # Ensure log file is writable
-  touch /var/log/postgresql.log
-  chown postgres:postgres /var/log/postgresql.log
-
-  # Start PostgreSQL
-  echo "[entrypoint] Starting PostgreSQL..."
-  set +e
-  su -s /bin/sh postgres -c "pg_ctl -D $PG_DATA -l /var/log/postgresql.log start -w -t 30"
-  pg_exit=$?
-  set -e
-  if [ "$pg_exit" -ne 0 ]; then
-    echo "[entrypoint] PostgreSQL failed to start (exit code $pg_exit). Log output:"
-    cat /var/log/postgresql.log 2>/dev/null || echo "(no log file found)"
-    exit 1
+  if [ -n "$backend_pid" ]; then
+    kill -TERM "$backend_pid" 2>/dev/null || true
+    wait "$backend_pid" 2>/dev/null || true
   fi
-  echo "[entrypoint] PostgreSQL started."
-
-  # Wait until PostgreSQL is ready to accept connections
-  for i in $(seq 1 15); do
-    if su -s /bin/sh postgres -c "pg_isready -q"; then
-      break
-    fi
-    echo "[entrypoint] Waiting for PostgreSQL to be ready... ($i/15)"
-    sleep 1
-  done
-
-  # Create user and database if they don't exist
-  echo "[entrypoint] Ensuring database '$PG_DB' and user '$PG_USER' exist..."
-  su -s /bin/sh postgres -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='$PG_USER'\" | grep -q 1 || psql -c \"CREATE USER $PG_USER WITH PASSWORD '$PG_PASS'\""
-  su -s /bin/sh postgres -c "psql -tc \"SELECT 1 FROM pg_catalog.pg_database WHERE datname='$PG_DB'\" | grep -q 1 || psql -c \"CREATE DATABASE $PG_DB OWNER $PG_USER\""
-
-  export DATABASE_URL="postgres://$PG_USER:$PG_PASS@localhost:5432/$PG_DB?sslmode=disable"
-  echo "[entrypoint] Embedded PostgreSQL ready. DATABASE_URL set."
+  if [ "$embedded_pg_started" = true ]; then
+    su -s /bin/sh postgres -c 'pg_ctl -D "$PG_DATA" -m fast -w stop' || true
+  fi
 }
 
-if [ -z "$DATABASE_URL" ]; then
-  echo "[entrypoint] DATABASE_URL not set, starting embedded PostgreSQL..."
-  start_embedded_pg
+trap cleanup EXIT
+trap 'exit 0' TERM INT
+
+start_embedded_pg() {
+  mkdir -p "$PG_DATA" /run/postgresql
+  chown postgres:postgres "$PG_DATA" /run/postgresql
+
+  if [ ! -s "$PG_DATA/PG_VERSION" ]; then
+    echo "[entrypoint] Initializing PostgreSQL data directory..."
+    su -s /bin/sh postgres -c 'initdb -D "$PG_DATA" --no-locale --encoding=UTF8 --auth-local=trust --auth-host=scram-sha-256'
+  fi
+
+  echo "[entrypoint] Starting embedded PostgreSQL..."
+  su -s /bin/sh postgres -c 'pg_ctl -D "$PG_DATA" -o "-c shared_buffers=32MB" -w -t 30 start'
+  embedded_pg_started=true
+
+  export MOMSHELL_PG_USER="${POSTGRES_USER:-momshell}"
+  export MOMSHELL_PG_PASSWORD="${POSTGRES_PASSWORD:-momshell}"
+  export MOMSHELL_PG_DB="${POSTGRES_DB:-momshell}"
+  su -s /bin/sh postgres -c 'psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres' <<'SQL'
+\getenv app_user MOMSHELL_PG_USER
+\getenv app_password MOMSHELL_PG_PASSWORD
+\getenv app_db MOMSHELL_PG_DB
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'app_user', :'app_password')
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = :'app_user')
+\gexec
+SELECT format('CREATE DATABASE %I OWNER %I', :'app_db', :'app_user')
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'app_db')
+\gexec
+SQL
+
+  export DATABASE_URL="host=127.0.0.1 port=5432 sslmode=disable"
+  export PGUSER="$MOMSHELL_PG_USER" PGPASSWORD="$MOMSHELL_PG_PASSWORD" PGDATABASE="$MOMSHELL_PG_DB"
+}
+
+case "${DATABASE_URL:-}" in
+  '')
+    start_embedded_pg
+    ;;
+  postgres://*@localhost:5432/*|postgresql://*@localhost:5432/*|postgres://*@127.0.0.1:5432/*|postgresql://*@127.0.0.1:5432/*)
+    # Older development env files used a localhost URL with the embedded database.
+    if ! pg_isready -h 127.0.0.1 -p 5432 -q; then
+      start_embedded_pg
+    fi
+    ;;
+  *)
+    echo "[entrypoint] Using external database."
+    ;;
+esac
+
+export PORT="${PORT:-8000}"
+export TRUSTED_PROXIES="${TRUSTED_PROXIES:-127.0.0.1}"
+export MOMSHELL_BACKEND="127.0.0.1:$PORT"
+
+/app/server &
+backend_pid=$!
+/docker-entrypoint.sh nginx -g 'daemon off;' &
+nginx_pid=$!
+
+# Make Docker restart/report the service if either process stops unexpectedly.
+if wait -n; then
+  exit 1
 else
-  # If DATABASE_URL points to localhost, check if PostgreSQL is reachable
-  case "$DATABASE_URL" in
-    *localhost*|*127.0.0.1*)
-      if ! pg_isready -h 127.0.0.1 -p 5432 -q 2>/dev/null; then
-        echo "[entrypoint] DATABASE_URL points to localhost but PostgreSQL is not running, starting embedded..."
-        start_embedded_pg
-      else
-        echo "[entrypoint] Using existing local PostgreSQL."
-      fi
-      ;;
-    *)
-      echo "[entrypoint] Using external database."
-      ;;
-  esac
+  exit $?
 fi
-
-# Start backend in background with auto-restart
-echo "[entrypoint] Starting backend server..."
-(
-  while true; do
-    /app/server
-    exit_code=$?
-    echo "[entrypoint] Backend exited with code $exit_code, restarting in 3s..."
-    sleep 3
-  done
-) &
-BACKEND_PID=$!
-
-# Wait for backend to be ready before starting nginx
-echo "[entrypoint] Waiting for backend to be ready..."
-for i in $(seq 1 30); do
-  if wget -q -O /dev/null http://127.0.0.1:8000/health 2>/dev/null; then
-    echo "[entrypoint] Backend is ready."
-    break
-  fi
-  if [ "$i" -eq 30 ]; then
-    echo "[entrypoint] WARNING: Backend not ready after 30s, starting nginx anyway."
-  fi
-  sleep 1
-done
-
-# Start nginx in foreground
-echo "[entrypoint] Starting nginx..."
-exec nginx -g "daemon off;"

@@ -138,7 +138,7 @@ func (h *PhotoHandler) Generate(c *gin.Context) {
 
 	result, err := h.photoService.GeneratePhoto(ctx, userID, req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		respondWithAIError(c, http.StatusBadRequest, err)
 		return
 	}
 

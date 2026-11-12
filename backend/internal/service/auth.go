@@ -221,20 +221,22 @@ func (s *AuthService) GetJWTSecret() string {
 }
 
 func (s *AuthService) generateTokens(userID string) (*dto.TokenResponse, error) {
-	accessToken, err := pkgjwt.CreateAccessToken(userID, s.cfg.JWTSecretKey, s.cfg.JWTAccessTokenExpireMin)
+	settings := s.cfg.Runtime()
+	accessToken, err := pkgjwt.CreateAccessToken(userID, s.cfg.JWTSecretKey, settings.JWTAccessTokenExpireMin)
 	if err != nil {
 		return nil, fmt.Errorf("创建访问令牌失败: %w", err)
 	}
 
-	refreshToken, err := pkgjwt.CreateRefreshToken(userID, s.cfg.JWTSecretKey, s.cfg.JWTRefreshTokenExpireDays)
+	refreshToken, err := pkgjwt.CreateRefreshToken(userID, s.cfg.JWTSecretKey, settings.JWTRefreshTokenExpireDays)
 	if err != nil {
 		return nil, fmt.Errorf("创建刷新令牌失败: %w", err)
 	}
 
 	return &dto.TokenResponse{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresIn:    s.cfg.JWTAccessTokenExpireMin * 60,
+		AccessToken:      accessToken,
+		RefreshToken:     refreshToken,
+		ExpiresIn:        settings.JWTAccessTokenExpireMin * 60,
+		RefreshExpiresIn: settings.JWTRefreshTokenExpireDays * 86400,
 	}, nil
 }
 

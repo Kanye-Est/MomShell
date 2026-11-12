@@ -34,7 +34,8 @@ _Your Family Translator_ — An AI-powered wellness platform combining emotional
 ## Quick Start
 
 ```bash
-git clone https://github.com/koishi510/MomShell.git
+git lfs install
+git clone https://github.com/Kanye-Est/MomShell.git
 cd MomShell
 ./scripts/dev-setup.sh
 
@@ -78,8 +79,8 @@ MomShell/
 ## Docker Deployment
 
 ```bash
-cp .env.example .env    # Edit .env: set DATABASE_URL, JWT_SECRET_KEY, OPENAI_API_KEY, etc.
-make docker-up          # Build and start app + postgres on http://localhost
+cp .env.example .env    # Set POSTGRES_PASSWORD and JWT_SECRET_KEY
+make docker-up          # http://localhost:7860
 ```
 
 [Full deployment guide](docs/deployment.md)

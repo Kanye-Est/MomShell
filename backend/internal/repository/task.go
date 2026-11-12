@@ -36,8 +36,17 @@ func (r *TaskRepo) FindRandomTemplates(count int) ([]model.DailyTask, error) {
 
 // UserTask operations
 
-func (r *TaskRepo) CreateUserTask(ut *model.UserTask) error {
-	return r.db.Create(ut).Error
+func (r *TaskRepo) WithDailyTaskLock(userID string, run func(tx *gorm.DB) error) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(589023418, hashtext(?))", userID).Error; err != nil {
+			return err
+		}
+		return run(tx)
+	})
+}
+
+func (r *TaskRepo) CreateUserTasks(tasks []model.UserTask) error {
+	return r.db.Create(&tasks).Error
 }
 
 func (r *TaskRepo) FindUserTasksByDate(userID string, date time.Time) ([]model.UserTask, error) {
@@ -58,20 +67,24 @@ func (r *TaskRepo) FindUserTaskByID(id string) (*model.UserTask, error) {
 	return &task, nil
 }
 
-func (r *TaskRepo) UpdateUserTask(ut *model.UserTask) error {
-	return r.db.Save(ut).Error
+func (r *TaskRepo) UpdateUserTask(ut *model.UserTask, previousStatus model.TaskStatus) error {
+	result := r.db.Model(ut).
+		Where("status = ?", previousStatus).
+		Select("status", "completed_at", "proof_photo_url", "score", "comment", "scored_by_id", "scored_at").
+		Updates(ut)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
-// ResetUserTaskToPending clears completed_at and sets status back to pending.
-func (r *TaskRepo) ResetUserTaskToPending(ut *model.UserTask) error {
-	return r.db.Model(ut).
-		Select("status", "completed_at", "comment", "proof_photo_url").
-		Updates(map[string]interface{}{
-			"status":          ut.Status,
-			"completed_at":    nil,
-			"comment":         ut.Comment,
-			"proof_photo_url": nil,
-		}).Error
+func (r *TaskRepo) SetTaskMemoryPhoto(taskID, imageURL string) error {
+	return r.db.Model(&model.UserTask{}).
+		Where("id = ? AND status = ?", taskID, model.TaskVerified).
+		Update("memory_photo_url", imageURL).Error
 }
 
 func (r *TaskRepo) SumScoreByUserID(userID string) (int, error) {
@@ -114,7 +127,7 @@ func (r *TaskRepo) FindVerifiedTasksByUserID(userID string) ([]model.UserTask, e
 func (r *TaskRepo) FindAICache(coupleKey, date, cacheType string) (*model.AIGeneratedTask, error) {
 	var cache model.AIGeneratedTask
 	err := r.db.Session(&gorm.Session{Logger: r.db.Logger.LogMode(logger.Silent)}).
-		Where("couple_key = ? AND date = ? AND type = ?", coupleKey, date, cacheType).First(&cache).Error
+		Where("couple_key = ? AND date = ? AND type = ?", coupleKey, date, cacheType).Order("created_at DESC").First(&cache).Error
 	if err != nil {
 		return nil, err
 	}

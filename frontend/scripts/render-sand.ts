@@ -5,7 +5,7 @@
  * 用法: npx tsx scripts/render-sand.ts [输出文件名]
  *
  * 可调参数在下方 CONFIG 区域，改完后重新运行即可。
- * 生成: src/assets/sand.png  (7680×630, RGBA, 透明顶部渐变到 #f8eed8)
+ * 生成: src/assets/images/sand.png  (7680×630, RGBA, 透明顶部渐变到 #f8eed8)
  */
 
 import puppeteer from 'puppeteer'
@@ -17,7 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // ============ CONFIG ============
 const WIDTH = 7680
 const HEIGHT = 630
-const OUTPUT = path.join(__dirname, '..', 'src', 'assets', process.argv[2] || 'sand.png')
+const OUTPUT = path.resolve(process.argv[2] || path.join(__dirname, '..', 'src', 'assets', 'images', 'sand.png'))
 // ================================
 
 const html = `<!DOCTYPE html>
@@ -168,26 +168,27 @@ async function main(): Promise<void> {
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
-      '--default-background-color=00000000',
-      `--window-size=${WIDTH},${HEIGHT}`,
+      '--disable-dev-shm-usage',
     ],
   })
 
-  const page = await browser.newPage()
-  await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: 1 })
-  await page.setContent(html, { waitUntil: 'networkidle0' })
+  try {
+    const page = await browser.newPage()
+    await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: 1 })
+    await page.setContent(html, { waitUntil: 'networkidle0' })
 
-  // 等待 SVG filter 渲染完成
-  await new Promise<void>(r => setTimeout(r, 500))
+    // 等待 SVG filter 渲染完成
+    await new Promise<void>(resolve => setTimeout(resolve, 500))
 
-  await page.screenshot({
-    path: OUTPUT,
-    type: 'png',
-    omitBackground: true,
-    clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT },
-  })
-
-  await browser.close()
+    await page.screenshot({
+      path: OUTPUT,
+      type: 'png',
+      omitBackground: true,
+      clip: { x: 0, y: 0, width: WIDTH, height: HEIGHT },
+    })
+  } finally {
+    await browser.close()
+  }
   console.log('sand.png saved to', OUTPUT, `(${WIDTH}x${HEIGHT})`)
 }
 

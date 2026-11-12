@@ -2,6 +2,7 @@ package service
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/momshell/backend/internal/model"
 	"github.com/momshell/backend/internal/repository"
@@ -133,23 +134,27 @@ func normalizeAITasks(tasks []AITaskData) []AITaskData {
 		"T0": true, "T1": true, "T2": true,
 	}
 
-	for i := range tasks {
-		tasks[i].Category = strings.ToLower(strings.TrimSpace(tasks[i].Category))
-		if !validCategories[tasks[i].Category] {
-			tasks[i].Category = "parenting"
+	normalized := make([]AITaskData, 0, min(len(tasks), 5))
+	seen := make(map[string]bool)
+	for _, task := range tasks {
+		task.Title = strings.TrimSpace(task.Title)
+		if task.Title == "" || utf8.RuneCountInString(task.Title) > 200 || seen[task.Title] {
+			continue
 		}
-		if tasks[i].Difficulty < 1 {
-			tasks[i].Difficulty = 1
+		seen[task.Title] = true
+		task.Category = strings.ToLower(strings.TrimSpace(task.Category))
+		if !validCategories[task.Category] {
+			task.Category = "parenting"
 		}
-		if tasks[i].Difficulty > 5 {
-			tasks[i].Difficulty = 5
+		task.Difficulty = max(1, min(5, task.Difficulty))
+		task.Priority = strings.ToUpper(strings.TrimSpace(task.Priority))
+		if !validPriorities[task.Priority] {
+			task.Priority = "T2"
 		}
-
-		tasks[i].Priority = strings.ToUpper(strings.TrimSpace(tasks[i].Priority))
-		if !validPriorities[tasks[i].Priority] {
-			tasks[i].Priority = "T2"
+		normalized = append(normalized, task)
+		if len(normalized) == 5 {
+			break
 		}
 	}
-
-	return tasks
+	return normalized
 }

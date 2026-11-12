@@ -24,7 +24,7 @@ func handleUserError(c *gin.Context, err error, successStatus int, data any) {
 		if err.Error() == "用户不存在" {
 			status = http.StatusUnauthorized
 		}
-		c.JSON(status, gin.H{"error": err.Error()})
+		respondWithAIError(c, status, err)
 		return
 	}
 	c.JSON(successStatus, data)

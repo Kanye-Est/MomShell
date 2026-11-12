@@ -42,6 +42,9 @@ func NewRAGService(client *openai.Client, ragRepo *repository.RAGRepo, cfg *conf
 
 // IndexText creates and stores an embedding for the given text.
 func (s *RAGService) IndexText(ctx context.Context, source model.KnowledgeSource, sourceID string, userID *string, content string) error {
+	if !s.client.Enabled() {
+		return nil
+	}
 	exists, err := s.ragRepo.Exists(source, sourceID)
 	if err != nil {
 		return err
@@ -272,6 +275,9 @@ func (s *RAGService) rerank(ctx context.Context, query string, results []model.S
 // Search is the main entry point for RAG retrieval.
 // It performs query transformation, hybrid retrieval, reranking, and top-K filtering.
 func (s *RAGService) Search(ctx context.Context, query string, userID *string) ([]model.ScoredResult, error) {
+	if !s.client.Enabled() {
+		return nil, nil
+	}
 	// Step 1: Query transformation
 	qt := s.transformQuery(ctx, query)
 

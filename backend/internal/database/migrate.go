@@ -1,18 +1,35 @@
 package database
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/momshell/backend/internal/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func Migrate(db *gorm.DB) error {
-	// Enable pgvector extension (non-fatal: RAG features disabled if unavailable)
-	hasPgvector := true
-	if err := db.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error; err != nil {
-		log.Printf("[migrate] WARNING: pgvector extension not available, RAG features will be disabled: %v", err)
-		hasPgvector = false
+	return db.Transaction(func(tx *gorm.DB) error {
+		// Serialize schema changes and seeding when two instances start together.
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(589023417)").Error; err != nil {
+			return err
+		}
+		if err := migrateLegacyTaskColumns(tx); err != nil {
+			return fmt.Errorf("migrate legacy task columns: %w", err)
+		}
+		return migrateSchema(tx)
+	})
+}
+
+func migrateSchema(db *gorm.DB) error {
+	// A savepoint keeps the main migration transaction usable when vector is unavailable.
+	vectorErr := db.Transaction(func(tx *gorm.DB) error {
+		return tx.Exec("CREATE EXTENSION IF NOT EXISTS vector").Error
+	})
+	hasPgvector := vectorErr == nil
+	if vectorErr != nil {
+		log.Printf("[migrate] pgvector extension unavailable: %v", vectorErr)
 	}
 
 	models := []any{
@@ -48,42 +65,78 @@ func Migrate(db *gorm.DB) error {
 		return err
 	}
 
-	// Create GIN index for full-text search on knowledge_embeddings.content
 	if hasPgvector {
-		db.Exec("CREATE INDEX IF NOT EXISTS idx_knowledge_embeddings_content_fts ON knowledge_embeddings USING GIN (to_tsvector('simple', content))")
+		if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_knowledge_embeddings_content_fts ON knowledge_embeddings USING GIN (to_tsvector('simple', content))").Error; err != nil {
+			return err
+		}
 	}
 
-	// Seed default daily tasks if none exist
-	seedDailyTasks(db)
-	seedAchievements(db)
+	if err := seedDailyTasks(db); err != nil {
+		return fmt.Errorf("seed daily tasks: %w", err)
+	}
+	if err := seedAchievements(db); err != nil {
+		return fmt.Errorf("seed achievements: %w", err)
+	}
 
 	// Migrate legacy role='admin' users to is_admin flag
-	db.Model(&model.User{}).Where("role = ?", "admin").Updates(map[string]interface{}{
+	if err := db.Model(&model.User{}).Where("role = ?", "admin").Updates(map[string]interface{}{
 		"is_admin": true,
 		"role":     "mom",
-	})
+	}).Error; err != nil {
+		return err
+	}
 
 	// Backfill dad chat style for legacy users after the column is introduced.
-	db.Exec("UPDATE users SET dad_chat_style = 'terminal' WHERE dad_chat_style IS NULL OR dad_chat_style = ''")
+	if err := db.Exec("UPDATE users SET dad_chat_style = 'terminal' WHERE dad_chat_style IS NULL OR dad_chat_style = ''").Error; err != nil {
+		return err
+	}
 
 	// Backfill OwnerUserID for existing ChatMemoryFacts
-	db.Exec("UPDATE chat_memory_facts SET owner_user_id = user_id WHERE owner_user_id IS NULL OR owner_user_id = ''")
+	if err := db.Exec("UPDATE chat_memory_facts SET owner_user_id = user_id WHERE owner_user_id IS NULL OR owner_user_id = ''").Error; err != nil {
+		return err
+	}
 
 	// Drop legacy NOT NULL and FK constraint on user_tasks.task_id (now nullable for AI tasks)
-	db.Exec("ALTER TABLE user_tasks ALTER COLUMN task_id DROP NOT NULL")
-	db.Exec("ALTER TABLE user_tasks DROP CONSTRAINT IF EXISTS fk_user_tasks_task")
+	return db.Exec(`ALTER TABLE user_tasks
+		ALTER COLUMN task_id DROP NOT NULL,
+		DROP CONSTRAINT IF EXISTS fk_user_tasks_task`).Error
+}
 
-	// Fix column names from GORM's default naming (a_idescription → ai_description)
-	db.Exec("ALTER TABLE user_tasks RENAME COLUMN a_idescription TO ai_description")
-	db.Exec("ALTER TABLE user_tasks RENAME COLUMN a_idifficulty TO ai_difficulty")
+func migrateLegacyTaskColumns(db *gorm.DB) error {
+	migrator := db.Migrator()
+	columns := []struct {
+		old, current, backfill string
+	}{
+		{"a_idescription", "ai_description", `UPDATE user_tasks SET ai_description = a_idescription
+			WHERE (ai_description IS NULL OR ai_description = '') AND a_idescription <> ''`},
+		{"a_idifficulty", "ai_difficulty", `UPDATE user_tasks SET ai_difficulty = a_idifficulty
+			WHERE (ai_difficulty IS NULL OR ai_difficulty = 0) AND a_idifficulty <> 0`},
+	}
+	for _, col := range columns {
+		if !migrator.HasColumn("user_tasks", col.old) {
+			continue
+		}
+		if !migrator.HasColumn("user_tasks", col.current) {
+			if err := migrator.RenameColumn("user_tasks", col.old, col.current); err != nil {
+				return err
+			}
+			continue
+		}
+		// Older builds could add the new column before failing to rename the old one.
+		if err := db.Exec(col.backfill).Error; err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func seedDailyTasks(db *gorm.DB) {
+func seedDailyTasks(db *gorm.DB) error {
 	var count int64
-	db.Model(&model.DailyTask{}).Count(&count)
+	if err := db.Model(&model.DailyTask{}).Count(&count).Error; err != nil {
+		return err
+	}
 	if count > 0 {
-		return
+		return nil
 	}
 
 	tasks := []model.DailyTask{
@@ -113,21 +166,10 @@ func seedDailyTasks(db *gorm.DB) {
 		{Title: "表达一次感谢", Description: "告诉她你看到了她的付出和辛苦", Category: model.TaskCategoryEmotional, Difficulty: 1},
 	}
 
-	for i := range tasks {
-		if tasks[i].Priority == "" {
-			tasks[i].Priority = model.PriorityT2
-		}
-		db.Create(&tasks[i])
-	}
+	return db.Create(&tasks).Error
 }
 
-func seedAchievements(db *gorm.DB) {
-	var count int64
-	db.Model(&model.Achievement{}).Count(&count)
-	if count > 0 {
-		return
-	}
-
+func seedAchievements(db *gorm.DB) error {
 	achievements := []model.Achievement{
 		{
 			Code:        "aap_apprentice",
@@ -149,7 +191,8 @@ func seedAchievements(db *gorm.DB) {
 		},
 	}
 
-	for i := range achievements {
-		db.Create(&achievements[i])
-	}
+	return db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "code"}},
+		DoNothing: true,
+	}).Create(&achievements).Error
 }

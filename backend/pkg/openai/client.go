@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,25 +20,58 @@ const (
 	bearerPrefix         = "Bearer "
 )
 
+var (
+	ErrNotConfigured      = errors.New("AI 服务尚未配置，请联系管理员设置 OPENAI_API_KEY")
+	ErrAuthentication     = errors.New("AI 服务认证失败，请联系管理员更新 OPENAI_API_KEY")
+	ErrImageNotConfigured = errors.New("尚未配置 AI 图片生成")
+)
+
 type Client struct {
-	apiKey         string
-	baseURL        string
-	model          string
-	embeddingModel string
-	http           *http.Client
+	apiKey          string
+	baseURL         string
+	model           string
+	embeddingModel  string
+	http            *http.Client
+	runtimeSettings func() (apiKey, baseURL, model string)
 }
 
 func NewClient(apiKey, baseURL, model, embeddingModel string) *Client {
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
 	return &Client{
-		apiKey:         apiKey,
-		baseURL:        baseURL,
+		apiKey:         strings.TrimSpace(apiKey),
+		baseURL:        normalizeBaseURL(baseURL),
 		model:          model,
 		embeddingModel: embeddingModel,
 		http:           &http.Client{Timeout: 60 * time.Second},
 	}
+}
+
+func NewRuntimeClient(embeddingModel string, settings func() (apiKey, baseURL, model string)) *Client {
+	c := NewClient("", "", "", embeddingModel)
+	c.runtimeSettings = settings
+	return c
+}
+
+func normalizeBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return "https://api.openai.com/v1"
+	}
+	return baseURL
+}
+
+func (c *Client) snapshot() *Client {
+	if c.runtimeSettings == nil {
+		return c
+	}
+	key, baseURL, model := c.runtimeSettings()
+	return &Client{
+		apiKey: strings.TrimSpace(key), baseURL: normalizeBaseURL(baseURL),
+		model: model, embeddingModel: c.embeddingModel, http: c.http,
+	}
+}
+
+func (c *Client) Enabled() bool {
+	return c != nil && c.snapshot().apiKey != ""
 }
 
 type Message struct {
@@ -67,6 +101,9 @@ type chatResponse struct {
 // doPost sends an authenticated POST request and returns the response body.
 // It handles marshaling, header setup, and status code validation.
 func (c *Client) doPost(ctx context.Context, path string, reqBody any, maxSize int64, extraHeaders map[string]string) ([]byte, error) {
+	if c.apiKey == "" {
+		return nil, ErrNotConfigured
+	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
@@ -93,14 +130,19 @@ func (c *Client) doPost(ctx context.Context, path string, reqBody any, maxSize i
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return respBody, fmt.Errorf("request to %s failed: status %d", path, resp.StatusCode)
+	if isAuthenticationFailure(resp.StatusCode) {
+		return nil, ErrAuthentication
+	}
+	acceptedAsyncImage := path == "/images/generations" && resp.StatusCode == http.StatusAccepted
+	if resp.StatusCode != http.StatusOK && !acceptedAsyncImage {
+		return nil, fmt.Errorf("request to %s failed: status %d", path, resp.StatusCode)
 	}
 
 	return respBody, nil
 }
 
 func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
+	c = c.snapshot()
 	reqBody := chatRequest{
 		Model:          c.model,
 		Messages:       messages,
@@ -145,6 +187,7 @@ type embeddingResponse struct {
 }
 
 func (c *Client) CreateEmbedding(ctx context.Context, input string) ([]float32, error) {
+	c = c.snapshot()
 	reqBody := embeddingRequest{
 		Model: c.embeddingModel,
 		Input: input,
@@ -308,6 +351,7 @@ func (c *Client) handleAsyncTask(ctx context.Context, respBody []byte) (*ImageRe
 }
 
 func (c *Client) GenerateImage(ctx context.Context, model, prompt string) (*ImageResponse, error) {
+	c = c.snapshot()
 	reqBody := imageRequest{
 		Model:             model,
 		Prompt:            prompt,
@@ -319,21 +363,10 @@ func (c *Client) GenerateImage(ctx context.Context, model, prompt string) (*Imag
 
 	headers := map[string]string{"X-ModelScope-Async-Mode": "true"}
 	respBody, err := c.doPost(ctx, "/images/generations", reqBody, maxImageResponseSize, headers)
-	if err != nil && respBody == nil {
-		return nil, err
-	}
-
-	log.Printf("[ImageGen] model=%s POST body_len=%d", model, len(respBody))
-
 	if err != nil {
-		// doPost returns non-nil respBody with error for non-200 status.
-		// Image API also accepts 202 (Accepted) for async tasks.
-		// Try parsing as async task before failing.
-		if asyncResp, asyncErr := c.handleAsyncTask(ctx, respBody); asyncResp != nil || asyncErr != nil {
-			return asyncResp, asyncErr
-		}
 		return nil, err
 	}
+	log.Printf("[ImageGen] model=%s POST body_len=%d", model, len(respBody))
 
 	// Try parsing as an async task response (ModelScope returns task_id for polling)
 	if asyncResp, asyncErr := c.handleAsyncTask(ctx, respBody); asyncResp != nil || asyncErr != nil {
@@ -450,6 +483,9 @@ func (c *Client) pollImageTask(ctx context.Context, taskID string) (*ImageRespon
 		}
 
 		log.Printf("[ImageGen] poll #%d status=%d body_len=%d", i+1, resp.StatusCode, len(respBody))
+		if isAuthenticationFailure(resp.StatusCode) {
+			return nil, ErrAuthentication
+		}
 
 		var status taskStatusResponse
 		if err := json.Unmarshal(respBody, &status); err != nil {
@@ -463,4 +499,8 @@ func (c *Client) pollImageTask(ctx context.Context, taskID string) (*ImageRespon
 	}
 
 	return nil, fmt.Errorf("image generation timed out after polling")
+}
+
+func isAuthenticationFailure(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
 }

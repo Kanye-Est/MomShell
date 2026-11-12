@@ -183,7 +183,7 @@ func (s *WhisperService) GetWhisperTips(callerID string) (*dto.WhisperTips, erro
 		}, nil
 	}
 
-	if s.aiClient == nil {
+	if !s.aiClient.Enabled() {
 		return &dto.WhisperTips{
 			Tips:     "她最近留下了一些心声。先别急着解决问题，今晚可以先问问她最想让你接走哪一件事。",
 			Whispers: items,
@@ -207,8 +207,12 @@ func (s *WhisperService) GetWhisperTips(callerID string) (*dto.WhisperTips, erro
 	tips, err := s.aiClient.Chat(ctx, messages)
 	if err != nil {
 		log.Printf("[WhisperService] AI tips generation failed: %v", err)
+		message := "暂时无法生成建议，请稍后再试。"
+		if errors.Is(err, openai.ErrAuthentication) {
+			message = openai.ErrAuthentication.Error()
+		}
 		return &dto.WhisperTips{
-			Tips:     "暂时无法生成建议，请稍后再试。",
+			Tips:     message,
 			Whispers: items,
 		}, nil
 	}

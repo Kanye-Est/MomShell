@@ -14,7 +14,10 @@ import (
 	"github.com/momshell/backend/internal/repository"
 	"github.com/momshell/backend/pkg/llmvalidate"
 	"github.com/momshell/backend/pkg/openai"
+	"gorm.io/gorm"
 )
+
+var errFutureLetterChanged = errors.New("心语情报已更新，请刷新后再试")
 
 const (
 	futureLetterCodeOverview   = "future-self-v1"
@@ -189,10 +192,10 @@ func (s *WhisperService) GetFutureLetterView(callerID string) (*dto.FutureLetter
 
 	// Use AI to generate template dynamically (skip for Dad, cache for Mom)
 	var template futureLetterTemplate
-	if user.Role == model.RoleMom && s.aiClient != nil && user.PartnerID != nil {
+	if user.Role == model.RoleMom && s.aiClient.Enabled() && user.PartnerID != nil && s.taskRepo != nil {
 		ck := coupleKey(user.ID, *user.PartnerID)
 		date := time.Now().Format("2006-01-02")
-		if cache, err := s.taskRepo.FindAICache(ck, date, "future-letter-template"); err == nil && cache != nil {
+		if cache, err := s.taskRepo.FindAICache(ck, date, "future-letter-template"); err == nil && cache != nil && cache.AgeStage == currentAgeStage {
 			_ = json.Unmarshal([]byte(cache.Content), &template)
 		}
 
@@ -342,6 +345,9 @@ func (s *WhisperService) RespondFutureLetter(authorID string, req dto.FutureLett
 		wish,
 	)
 	if err != nil {
+		if errors.Is(err, openai.ErrNotConfigured) || errors.Is(err, openai.ErrAuthentication) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("心语情报生成失败，请稍后再试")
 	}
 	advice := s.buildDadAdvice(
@@ -355,10 +361,6 @@ func (s *WhisperService) RespondFutureLetter(authorID string, req dto.FutureLett
 		mission,
 	)
 
-	if err := s.syncDadMissionTasks(*author.PartnerID, author.ID, mission); err != nil {
-		return nil, fmt.Errorf("心语情报生成失败，请重试")
-	}
-
 	record := buildFutureLetterResponseRecord(
 		author,
 		req.LetterCode,
@@ -371,7 +373,12 @@ func (s *WhisperService) RespondFutureLetter(authorID string, req dto.FutureLett
 		wish,
 	)
 
-	return s.saveFutureLetterResponse(author.ID, record)
+	if err := s.saveFutureLetterMission(record, mission); err != nil {
+		log.Printf("[WhisperService] save future letter: %v", err)
+		return nil, fmt.Errorf("保存回信失败，请稍后再试")
+	}
+	item := toFutureLetterResponseItem(*record)
+	return &item, nil
 }
 
 // Removing obsolete switch-case respond methods:
@@ -409,18 +416,6 @@ func buildFutureLetterResponseRecord(
 		record.WishContent = &wish
 	}
 	return record
-}
-
-func (s *WhisperService) saveFutureLetterResponse(authorID string, record *model.FutureLetterResponse) (*dto.FutureLetterResponseItem, error) {
-	if record.WishContent != nil {
-		s.persistWish(authorID, *record.WishContent)
-	}
-	if err := s.futureLetterRepo.Create(record); err != nil {
-		return nil, fmt.Errorf("保存回信失败，请稍后再试")
-	}
-
-	item := toFutureLetterResponseItem(*record)
-	return &item, nil
 }
 
 func (s *WhisperService) buildDadMission(
@@ -554,7 +549,7 @@ func (s *WhisperService) translateDadAdviceWithAI(
 	ctx futureLetterAdviceContext,
 	mission dadMissionTemplate,
 ) (dadAdviceTemplate, error) {
-	if s.aiClient == nil {
+	if !s.aiClient.Enabled() {
 		return dadAdviceTemplate{}, fmt.Errorf("ai unavailable")
 	}
 
@@ -691,8 +686,8 @@ JSON 格式：
 }
 
 func (s *WhisperService) translateDadMissionWithAI(author *model.User, letterCode string, ageStage string, primaryTag string, primaryLabel string, secondaryTag string, secondaryLabel string, wish string) (dadMissionTemplate, error) {
-	if s.aiClient == nil {
-		return dadMissionTemplate{}, fmt.Errorf("ai unavailable")
+	if !s.aiClient.Enabled() {
+		return dadMissionTemplate{}, openai.ErrNotConfigured
 	}
 
 	template := buildFutureLetterTemplate(letterCode)
@@ -858,6 +853,9 @@ JSON 格式：
 	}
 
 	tasks := normalizeAITasks(payload.Tasks)
+	if len(tasks) == 0 {
+		return dadMissionTemplate{}, fmt.Errorf("ai mission returned no usable tasks")
+	}
 	missionTasks := make([]dadMissionTaskDef, 0, len(tasks))
 	for _, task := range tasks {
 		missionTasks = append(missionTasks, dadMissionTaskDef{
@@ -981,6 +979,9 @@ func (s *WhisperService) RegenerateFutureLetterForDad(callerID string) (*dto.Fut
 		wish,
 	)
 	if err != nil {
+		if errors.Is(err, openai.ErrNotConfigured) || errors.Is(err, openai.ErrAuthentication) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("重新生成任务失败，请稍后再试")
 	}
 
@@ -994,10 +995,6 @@ func (s *WhisperService) RegenerateFutureLetterForDad(callerID string) (*dto.Fut
 		wish,
 		mission,
 	)
-
-	if err := s.syncDadMissionTasks(user.ID, author.ID, mission); err != nil {
-		return nil, fmt.Errorf("重新生成任务失败，请重试")
-	}
 
 	itemsJSON, _ := json.Marshal(advice.Items)
 	sourcesJSON, _ := json.Marshal(advice.Sources)
@@ -1015,7 +1012,11 @@ func (s *WhisperService) RegenerateFutureLetterForDad(callerID string) (*dto.Fut
 		wish,
 	)
 
-	if err := s.futureLetterRepo.Update(&record); err != nil {
+	if err := s.saveFutureLetterMission(&record, mission); err != nil {
+		if errors.Is(err, errFutureLetterChanged) {
+			return nil, err
+		}
+		log.Printf("[WhisperService] save regenerated letter: %v", err)
 		return nil, fmt.Errorf("保存重生成情报失败，请稍后再试")
 	}
 
@@ -1368,21 +1369,18 @@ func buildFutureLetterQuestion(id, prompt string, defs []futureLetterOptionDef) 
 	}
 }
 
-func (s *WhisperService) syncDadMissionTasks(dadID, momID string, mission dadMissionTemplate) error {
+func (s *WhisperService) saveFutureLetterMission(record *model.FutureLetterResponse, mission dadMissionTemplate) error {
 	date := today()
 	dateStr := date.Format("2006-01-02")
-	ck := coupleKey(dadID, momID)
-
-	if err := s.taskRepo.DeletePendingUserTasksByDate(dadID, date); err != nil {
-		return err
-	}
-	_ = s.taskRepo.DeleteAICacheByCouple(ck, dateStr, "task")
-	_ = s.taskRepo.DeleteAICacheByCouple(ck, dateStr, "tips")
-	_ = s.taskRepo.DeleteAICacheByCouple(ck, dateStr, "future-letter-template")
-
+	key := coupleKey(record.RecipientID, record.AuthorID)
+	tasks := make([]model.UserTask, 0, len(mission.Tasks))
 	for _, task := range mission.Tasks {
-		ut := &model.UserTask{
-			UserID:        dadID,
+		priority := model.TaskPriority(task.Priority)
+		if priority == "" {
+			priority = model.PriorityT1
+		}
+		tasks = append(tasks, model.UserTask{
+			UserID:        record.RecipientID,
 			Date:          date,
 			Status:        model.TaskPending,
 			Source:        model.TaskSourceWhisper,
@@ -1390,37 +1388,56 @@ func (s *WhisperService) syncDadMissionTasks(dadID, momID string, mission dadMis
 			AIDescription: task.Description,
 			AICategory:    task.Category,
 			AIDifficulty:  task.Difficulty,
-			Priority:      model.TaskPriority(task.Priority),
+			Priority:      priority,
+		})
+	}
+
+	var wish *model.Whisper
+	err := s.taskRepo.WithDailyTaskLock(record.RecipientID, func(tx *gorm.DB) error {
+		letters := repository.NewFutureLetterRepo(tx)
+		if record.ID == "" {
+			if err := letters.Create(record); err != nil {
+				return err
+			}
+			if s.whisperRepo != nil && record.WishContent != nil {
+				wish = &model.Whisper{AuthorID: record.AuthorID, Content: *record.WishContent}
+				if err := repository.NewWhisperRepo(tx).Create(wish); err != nil {
+					return err
+				}
+			}
+		} else {
+			latest, err := letters.FindRecentByRecipientID(record.RecipientID, 1)
+			if err != nil {
+				return err
+			}
+			if len(latest) == 0 || latest[0].ID != record.ID {
+				return errFutureLetterChanged
+			}
+			if err := letters.Update(record); err != nil {
+				return err
+			}
 		}
-		if ut.Priority == "" {
-			ut.Priority = model.PriorityT1
-		}
-		if err := s.taskRepo.CreateUserTask(ut); err != nil {
+
+		repo := repository.NewTaskRepo(tx)
+		if err := repo.DeletePendingUserTasksByDate(record.RecipientID, date); err != nil {
 			return err
 		}
+		for _, cacheType := range []string{"task", "tips", "future-letter-template"} {
+			if err := repo.DeleteAICacheByCouple(key, dateStr, cacheType); err != nil {
+				return err
+			}
+		}
+		return repo.CreateUserTasks(tasks)
+	})
+	if err != nil {
+		return err
 	}
-
-	return nil
-}
-
-func (s *WhisperService) persistWish(authorID, wish string) {
-	if s.whisperRepo == nil || wish == "" {
-		return
-	}
-
-	w := &model.Whisper{
-		AuthorID: authorID,
-		Content:  wish,
-	}
-	if err := s.whisperRepo.Create(w); err != nil {
-		return
-	}
-
-	if s.ragService != nil {
+	if wish != nil && s.ragService != nil {
 		go func() {
-			_ = s.ragService.IndexText(context.Background(), model.SourceWhisper, w.ID, &authorID, wish)
+			_ = s.ragService.IndexText(context.Background(), model.SourceWhisper, wish.ID, &wish.AuthorID, wish.Content)
 		}()
 	}
+	return nil
 }
 
 func buildFutureLetterImagePrompt(letterCode, primaryLabel, secondaryLabel, missionTone, wish string) string {
@@ -1508,7 +1525,7 @@ func toFutureLetterResponseItem(item model.FutureLetterResponse) dto.FutureLette
 // PreGenerateDailyLetters pre-generates future letter templates for all bound moms.
 // Call this from a background goroutine on server startup and daily.
 func (s *WhisperService) PreGenerateDailyLetters() {
-	if s.aiClient == nil {
+	if !s.aiClient.Enabled() {
 		return
 	}
 	moms, err := s.userRepo.FindBoundMoms()
@@ -1524,7 +1541,7 @@ func (s *WhisperService) PreGenerateDailyLetters() {
 
 // PreGenerateForUser pre-generates the daily letter template for a single user in background.
 func (s *WhisperService) PreGenerateForUser(userID string) {
-	if s.aiClient == nil {
+	if !s.aiClient.Enabled() {
 		return
 	}
 	go func() {

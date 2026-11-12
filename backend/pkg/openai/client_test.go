@@ -3,11 +3,62 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestRuntimeClientUsesLatestSettings(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer new-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var req struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("could not decode request: %v", err)
+		}
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			if req.Model != "new-model" {
+				t.Errorf("unexpected chat model %q", req.Model)
+			}
+			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+		case "/v1/embeddings":
+			if req.Model != "embedding-model" {
+				t.Errorf("unexpected embedding model %q", req.Model)
+			}
+			_, _ = fmt.Fprint(w, `{"data":[{"embedding":[0.5]}]}`)
+		default:
+			t.Errorf("unexpected request path %q", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	var key string
+	model := "old-model"
+	client := NewRuntimeClient("embedding-model", func() (string, string, string) { return key, srv.URL + "/v1/", model })
+	ctx := context.Background()
+	if _, err := client.Chat(ctx, nil); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("expected missing key error, got %v", err)
+	}
+	key = "old-key"
+	if _, err := client.Chat(ctx, nil); !errors.Is(err, ErrAuthentication) {
+		t.Fatalf("expected authentication error, got %v", err)
+	}
+	key, model = "new-key", "new-model"
+	if text, err := client.Chat(ctx, nil); err != nil || text != "ok" {
+		t.Fatalf("expected updated settings to return ok, got %q and %v", text, err)
+	}
+	if result, err := client.CreateEmbedding(ctx, "example"); err != nil || len(result) != 1 || result[0] != 0.5 {
+		t.Fatalf("expected an embedding with the updated credentials, got %v and %v", result, err)
+	}
+}
 
 func TestExtractImagesFromTaskStatus_NotSucceed(t *testing.T) {
 	statuses := []string{"PENDING", "RUNNING", "FAILED", "failed", ""}
@@ -347,6 +398,20 @@ func TestGenerateImage_ServerError(t *testing.T) {
 	_, err := c.GenerateImage(context.Background(), "model", "a cat")
 	if err == nil {
 		t.Fatal("expected error for 400 response")
+	}
+}
+
+func TestGenerateImage_AcceptedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = fmt.Fprint(w, `{"task_status":"SUCCEED","output_images":["https://example.test/cover.png"]}`)
+	}))
+	defer srv.Close()
+
+	client := NewClient("key", srv.URL, "model", "embed-model")
+	image, err := client.GenerateImage(context.Background(), "image-model", "a cover")
+	if err != nil || image == nil || len(image.Data) != 1 || image.Data[0].URL != "https://example.test/cover.png" {
+		t.Fatalf("unexpected accepted response: %+v, %v", image, err)
 	}
 }
 

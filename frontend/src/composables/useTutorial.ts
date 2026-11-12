@@ -17,8 +17,8 @@ export function useTutorial() {
     step("stone", "Soul Companion (灵魂伴侣)", "这块坚稳的石头是你倾诉心声的安全树洞。无论何时，点这里都可以开启一段充满共情的对话。", "center"),
     step("bar", "Sisterhood Bond (姐妹纽带)", "去木屋看看大家在讨论什么吧！这里连接着广大的妈妈群体和资深认证的专家医疗人员。", "start"),
     step("car", "Partner Connection (伴侣视角)", "小车承载着生活的点滴。当你伴侣登录时，这里是你们情感互助交流的重要窗口。", "end"),
-    step("star", "Tasks (任务回执)", "这边会同步他提交的任务回执。完成、验收、留存纪念卡，都会从这里串起来。", "center"),
-    step("conque", "Whisper Intel (心语信箱)", "信箱会把你的问卷选择和一句心愿整理成可执行的心语情报，再发给伴侣。", "center"),
+    step("chair", "Tasks (任务回执)", "这边会同步他提交的任务回执。完成、验收、留存纪念卡，都会从这里串起来。", "center"),
+    step("mailbox", "Whisper Intel (心语信箱)", "信箱会把你的问卷选择和一句心愿整理成可执行的心语情报，再发给伴侣。", "center"),
     step("crab", "小螃蟹 (随时向导)", "迷路了或者想探索隐藏功能？随时点这只小螃蟹，它会给你各种有趣的提示。", "center", "right"),
   ];
 

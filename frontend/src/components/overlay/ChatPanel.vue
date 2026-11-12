@@ -54,7 +54,7 @@
         </Transition>
       </div>
 
-      <!-- Input -->
+      <p v-if="sendError" class="send-error" role="alert">{{ sendError }}</p>
       <form class="chat-input-area" @submit.prevent="onSend">
         <input
           v-model="input"
@@ -95,6 +95,7 @@ import OverlayPanel from './OverlayPanel.vue'
 import AiMemoryPanel from './AiMemoryPanel.vue'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
+import { getErrorMessage } from '@/lib/apiClient'
 import {
   sendChatMessage,
   getChatProfile,
@@ -108,6 +109,7 @@ const authStore = useAuthStore()
 const messages = ref<ChatMessage[]>(_messages.map(m => ({ ...m, showEffect: false })))
 const input = ref('')
 const sending = ref(false)
+const sendError = ref('')
 const messagesEl = ref<HTMLElement | null>(null)
 const preferredName = ref<string | null>(_preferredName)
 const showMemoryToast = ref(false)
@@ -291,6 +293,7 @@ async function onSend() {
     { id: Date.now(), role: 'user', text, showEffect: false },
   ]
   input.value = ''
+  sendError.value = ''
   sending.value = true
   showRipple.value = true
   setTimeout(() => { showRipple.value = false }, 800)
@@ -337,16 +340,10 @@ async function onSend() {
         showMemoryToast.value = false
       }, 2000)
     }
-  } catch {
-    messages.value = [
-      ...messages.value,
-      {
-        id: Date.now(),
-        role: 'assistant',
-        text: '抱歉，暂时无法回复，请稍后再试。',
-        showEffect: false,
-      },
-    ]
+  } catch (err) {
+    messages.value = messages.value.slice(0, -1)
+    input.value = text
+    sendError.value = getErrorMessage(err)
   } finally {
     sending.value = false
     syncPersistent()
@@ -356,6 +353,13 @@ async function onSend() {
 </script>
 
 <style scoped>
+.send-error {
+  margin: 0 16px 8px;
+  color: #ffcebf;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
 .chat-panel {
   display: flex;
   flex-direction: column;

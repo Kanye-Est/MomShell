@@ -63,15 +63,15 @@ Whisper intelligence with AI-powered scene guidance.
 Daily task execution and partner verification loop.
 
 - **Daily task board**: Dad sees today's tasks with a `pending → completed → verified` lifecycle and XP/level progression
-- **AI task generation**: Tasks can be generated based on the baby's age stage, with categories and difficulty
+- **AI task generation**: The text model turns future-letter responses into tasks for Dad, taking the baby's age stage into account
 - **Priority levels**: `T0` (urgent / emotional intervention), `T1` (milestone), `T2` (daily routine)
 - **Proof photo completion**: Dad can optionally upload a proof photo when completing a task
 - **Partner review (Mom)**: Mom reviews Dad's completed tasks with score (1-5) or reject back to pending
 - **Progress polling**: UI polls for updates to keep task state in sync between partners
 - **Skill radar + achievements**: Verified task scores aggregate into a six-dimension radar; achievements auto-unlock from seeded rules
 - **Perk cards**: Mom can issue perk cards; Dad can redeem them (active/used/expired)
-- **Future letters**: Replacing shell gifts — a time-space care engine generates contextual future letters from task completions, delivering meaningful messages over time
-- **Memory cards**: AI-generated memory cards from task completions with mom view filtering
+- **Future letters**: Mom answers a short questionnaire and can include a wish. Dad receives the letter and the resulting tasks.
+- **Memory cards**: An optional image model creates memory cards after Mom verifies tasks
 
 ## Dad Console
 

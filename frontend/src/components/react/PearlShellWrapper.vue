@@ -17,10 +17,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   requestFullscreen: []
   exitFullscreen: []
+  unavailable: []
 }>()
 
 const containerRef = ref<HTMLDivElement | null>(null)
 let root: Root | null = null
+const reportUnavailable = () => emit('unavailable')
 
 function renderReact() {
   if (!root) return
@@ -31,6 +33,7 @@ function renderReact() {
       showDebug: props.showDebug ?? false,
       onRequestFullscreen: () => emit('requestFullscreen'),
       onExitFullscreen: () => emit('exitFullscreen'),
+      onUnavailable: reportUnavailable,
     } satisfies PearlShellProps),
   )
 }

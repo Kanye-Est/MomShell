@@ -52,7 +52,7 @@ func buildVerifiedTaskCardPrompt(title, description string, score *int, comment 
 }
 
 func (s *TaskService) generateVerifiedTaskCardPhoto(momID string, ut model.UserTask) error {
-	if s.openaiClient == nil || s.imageModel == "" || s.photoRepo == nil {
+	if !s.openaiClient.Enabled() || s.imageModel == "" || s.photoRepo == nil {
 		return nil
 	}
 
@@ -91,7 +91,5 @@ func (s *TaskService) generateVerifiedTaskCardPhoto(momID string, ut model.UserT
 		return err
 	}
 
-	// Update the task with the generated photo URL
-	ut.MemoryPhotoURL = &photo.ImageURL
-	return s.taskRepo.UpdateUserTask(&ut)
+	return s.taskRepo.SetTaskMemoryPhoto(ut.ID, photo.ImageURL)
 }

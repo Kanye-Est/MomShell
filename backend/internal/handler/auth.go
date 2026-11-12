@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/momshell/backend/internal/config"
 	"github.com/momshell/backend/internal/dto"
 	"github.com/momshell/backend/internal/middleware"
 	"github.com/momshell/backend/internal/service"
@@ -19,11 +18,10 @@ const (
 
 type AuthHandler struct {
 	authService *service.AuthService
-	cfg         *config.Config
 }
 
-func NewAuthHandler(authService *service.AuthService, cfg *config.Config) *AuthHandler {
-	return &AuthHandler{authService: authService, cfg: cfg}
+func NewAuthHandler(authService *service.AuthService) *AuthHandler {
+	return &AuthHandler{authService: authService}
 }
 
 // setRefreshCookie sets the refresh token as an httpOnly, Secure, SameSite=Lax
@@ -77,8 +75,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	}
 
 	// Set refresh token as httpOnly cookie
-	maxAge := h.cfg.JWTRefreshTokenExpireDays * 86400
-	h.setRefreshCookie(c, resp.RefreshToken, maxAge)
+	h.setRefreshCookie(c, resp.RefreshToken, resp.RefreshExpiresIn)
 
 	// Return only access token in response body
 	c.JSON(http.StatusOK, dto.AccessTokenResponse{
@@ -108,8 +105,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	// Rotate refresh token cookie
-	maxAge := h.cfg.JWTRefreshTokenExpireDays * 86400
-	h.setRefreshCookie(c, resp.RefreshToken, maxAge)
+	h.setRefreshCookie(c, resp.RefreshToken, resp.RefreshExpiresIn)
 
 	c.JSON(http.StatusOK, dto.AccessTokenResponse{
 		AccessToken: resp.AccessToken,

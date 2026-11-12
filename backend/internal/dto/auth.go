@@ -19,9 +19,10 @@ type LoginRequest struct {
 
 // TokenResponse is the response body for login/refresh (internal use)
 type TokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"` // seconds
+	AccessToken      string `json:"access_token"`
+	RefreshToken     string `json:"refresh_token"`
+	ExpiresIn        int    `json:"expires_in"` // seconds
+	RefreshExpiresIn int    `json:"-"`          // seconds
 }
 
 // AccessTokenResponse is the response body sent to clients (refresh token in cookie only)
