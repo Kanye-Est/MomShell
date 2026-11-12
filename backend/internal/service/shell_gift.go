@@ -125,7 +125,7 @@ func (s *ShellGiftService) generateGiftText(
 		return baseTitle, strings.TrimSpace(body)
 	}
 
-	if s.aiClient == nil {
+	if !s.aiClient.Enabled() {
 		return fallback()
 	}
 

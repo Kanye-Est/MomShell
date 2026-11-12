@@ -104,7 +104,7 @@ else
             [nN]*) FAILED=1 ;;
             *)
                 info "Installing Node via nvm..."
-                nvm install
+                nvm install "$(cat "$PROJECT_ROOT/frontend/.nvmrc")"
                 check node && success "Node $(node -v) installed" || FAILED=1
                 ;;
         esac
@@ -170,63 +170,67 @@ DB_NAME="momshell"
 DB_USER="momshell"
 DB_PASS="momshell"
 
-# Check if PostgreSQL service is running
-if pg_isready -q 2>/dev/null; then
-    success "PostgreSQL is running"
+if [[ -f .env || -n "${DATABASE_URL:-}" ]]; then
+    success "Using the configured database"
 else
-    warn "PostgreSQL is not running, attempting to start..."
-    if [[ "$OSTYPE" == darwin* ]]; then
-        brew services start postgresql 2>/dev/null || brew services start "$(brew list --formula | grep -m1 '^postgresql@')" 2>/dev/null
+    # Check if PostgreSQL service is running
+    if pg_isready -h localhost -q 2>/dev/null; then
+        success "PostgreSQL is running"
     else
-        sudo systemctl start postgresql 2>/dev/null
-    fi
-    if pg_isready -q 2>/dev/null; then
-        success "PostgreSQL started"
-    else
-        fail "Could not start PostgreSQL"
+        warn "PostgreSQL is not running, attempting to start..."
         if [[ "$OSTYPE" == darwin* ]]; then
-            echo "  Try: brew services start postgresql"
+            brew services start postgresql 2>/dev/null || brew services start "$(brew list --formula | grep -m1 '^postgresql@')" 2>/dev/null || true
         else
-            echo "  Try: sudo systemctl start postgresql"
-            echo "  Arch first-time: sudo -u postgres initdb -D /var/lib/postgres/data"
+            sudo systemctl start postgresql 2>/dev/null || true
         fi
-        exit 1
+        if pg_isready -h localhost -q 2>/dev/null; then
+            success "PostgreSQL started"
+        else
+            fail "Could not start PostgreSQL"
+            if [[ "$OSTYPE" == darwin* ]]; then
+                echo "  Try: brew services start postgresql"
+            else
+                echo "  Try: sudo systemctl start postgresql"
+                echo "  Arch first-time: sudo -u postgres initdb -D /var/lib/postgres/data"
+            fi
+            exit 1
+        fi
     fi
-fi
 
-# Determine how to run psql as superuser
-# macOS Homebrew: psql runs as the current user who is already a superuser
-# Linux: need sudo -u postgres
-if [[ "$OSTYPE" == darwin* ]]; then
-    PG_SUDO="psql -d postgres"
-else
-    PG_SUDO="sudo -u postgres psql"
-fi
+    # Determine how to run psql as superuser
+    # macOS Homebrew: psql runs as the current user who is already a superuser
+    # Linux: need sudo -u postgres
+    if [[ "$OSTYPE" == darwin* ]]; then
+        PG_SUDO="psql -d postgres"
+    else
+        PG_SUDO="sudo -u postgres psql"
+    fi
 
-# Create database user if not exists
-if $PG_SUDO -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" 2>/dev/null | grep -q 1; then
-    success "Database user '$DB_USER' exists"
-else
-    info "Creating database user '$DB_USER'..."
-    $PG_SUDO -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null
-    success "Database user '$DB_USER' created"
-fi
+    # Create database user if not exists
+    if $PG_SUDO -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" 2>/dev/null | grep -q 1; then
+        success "Database user '$DB_USER' exists"
+    else
+        info "Creating database user '$DB_USER'..."
+        $PG_SUDO -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';" 2>/dev/null
+        success "Database user '$DB_USER' created"
+    fi
 
-# Create database if not exists
-if $PG_SUDO -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" 2>/dev/null | grep -q 1; then
-    success "Database '$DB_NAME' exists"
-else
-    info "Creating database '$DB_NAME'..."
-    $PG_SUDO -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null
-    success "Database '$DB_NAME' created"
-fi
+    # Create database if not exists
+    if $PG_SUDO -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" 2>/dev/null | grep -q 1; then
+        success "Database '$DB_NAME' exists"
+    else
+        info "Creating database '$DB_NAME'..."
+        $PG_SUDO -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;" 2>/dev/null
+        success "Database '$DB_NAME' created"
+    fi
 
-# Test connection
-if PGPASSWORD="$DB_PASS" psql -h localhost -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" &>/dev/null; then
-    success "Database connection verified"
-else
-    warn "Could not connect via localhost, check pg_hba.conf allows password auth"
-    echo "  Add to pg_hba.conf: host all all 127.0.0.1/32 md5"
+    # Test connection
+    if PGPASSWORD="$DB_PASS" psql -h localhost -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" &>/dev/null; then
+        success "Database connection verified"
+    else
+        warn "Could not connect via localhost, check pg_hba.conf allows password auth"
+        echo "  Check the existing role password or enter your connection URL in the next step."
+    fi
 fi
 
 # ============================================
@@ -256,7 +260,7 @@ else
 
     # Database (auto-filled from step 2)
     echo -e "  ${BLUE}-- Database --${NC}"
-    DATABASE_URL="postgres://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME?sslmode=disable"
+    DATABASE_URL="${DATABASE_URL:-postgres://$DB_USER:$DB_PASS@localhost:5432/$DB_NAME?sslmode=disable}"
     ask "DATABASE_URL" "$DATABASE_URL"
     DATABASE_URL="$REPLY"
 
@@ -296,11 +300,6 @@ else
     ask "PORT" "8000"
     PORT="$REPLY"
 
-    # Frontend
-    echo -e "  ${BLUE}-- Frontend --${NC}"
-    ask "VITE_API_BASE_URL" "http://localhost:8000"
-    VITE_API_BASE_URL="$REPLY"
-
     # Admin
     echo -e "  ${BLUE}-- Initial Admin (optional) --${NC}"
     ask "ADMIN_USERNAME" ""
@@ -313,10 +312,13 @@ else
     ADMIN_PASSWORD="$REPLY"
 
     # Write .env
-    cat > .env <<ENVEOF
+    (umask 077 && cat > .env) <<ENVEOF
 # MomShell Environment Configuration
 
 # ==================== Database ====================
+POSTGRES_USER=$DB_USER
+POSTGRES_PASSWORD=$DB_PASS
+POSTGRES_DB=$DB_NAME
 DATABASE_URL=$DATABASE_URL
 
 # ==================== JWT ====================
@@ -336,9 +338,6 @@ FIRECRAWL_API_KEY=$FIRECRAWL_API_KEY
 # ==================== Server ====================
 PORT=$PORT
 
-# ==================== Frontend ====================
-VITE_API_BASE_URL=$VITE_API_BASE_URL
-
 # ==================== Initial Admin (optional, created on first startup) ====================
 ADMIN_USERNAME=$ADMIN_USERNAME
 ADMIN_EMAIL=$ADMIN_EMAIL
@@ -355,17 +354,6 @@ fi
 echo ""
 echo -e "${BLUE}=== 4. Initialize Backend (Go) ===${NC}"
 
-# Set Go proxy to Chinese mirror if default proxy is unreachable
-CURRENT_GOPROXY=$(go env GOPROXY)
-if [[ "$CURRENT_GOPROXY" == *"proxy.golang.org"* ]]; then
-    info "Testing Go module proxy connectivity..."
-    if ! curl -sf --connect-timeout 5 "https://proxy.golang.org/" >/dev/null 2>&1; then
-        warn "proxy.golang.org unreachable, switching to goproxy.cn"
-        go env -w GOPROXY=https://goproxy.cn,direct
-        success "GOPROXY set to https://goproxy.cn,direct"
-    fi
-fi
-
 info "Downloading Go dependencies..."
 (cd "$PROJECT_ROOT/backend" && go mod download)
 success "Backend dependencies installed"
@@ -376,25 +364,8 @@ success "Backend dependencies installed"
 echo ""
 echo -e "${BLUE}=== 5. Initialize Frontend (Vue) ===${NC}"
 
-# Set npm registry to Chinese mirror if default registry is unreachable
-CURRENT_NPM_REGISTRY=$(npm config get registry 2>/dev/null)
-if [[ "$CURRENT_NPM_REGISTRY" == *"registry.npmjs.org"* ]]; then
-    info "Testing npm registry connectivity..."
-    if ! curl -sf --connect-timeout 5 "https://registry.npmjs.org/" >/dev/null 2>&1; then
-        warn "registry.npmjs.org unreachable, switching to npmmirror.com"
-        npm config set registry https://registry.npmmirror.com
-        success "npm registry set to https://registry.npmmirror.com"
-    fi
-fi
-
 info "Installing npm dependencies..."
-if [[ -d "$PROJECT_ROOT/frontend/node_modules" ]]; then
-    info "Cleaning stale node_modules..."
-    rm -rf "$PROJECT_ROOT/frontend/node_modules"
-fi
-# Use Chinese mirror for Puppeteer's Chromium download if needed
-export PUPPETEER_DOWNLOAD_BASE_URL="${PUPPETEER_DOWNLOAD_BASE_URL:-https://registry.npmmirror.com/mirrors/chrome-for-testing}"
-(cd "$PROJECT_ROOT/frontend" && npm install --ignore-scripts)
+(cd "$PROJECT_ROOT/frontend" && npm ci --ignore-scripts)
 success "Frontend dependencies installed"
 
 # ============================================
@@ -408,7 +379,7 @@ if check pre-commit; then
     success "Pre-commit hooks installed"
 else
     warn "pre-commit not installed"
-    if check pip; then
+    if [[ -t 0 ]] && check pip; then
         echo -en "  Install pre-commit via pip? ${YELLOW}[Y/n]${NC}: "
         read -r ans
         case "$ans" in
@@ -425,7 +396,7 @@ else
                 ;;
         esac
     else
-        warn "pip not found, skipping hook setup"
+        warn "Skipping optional hook setup"
         echo "  Install: pip install pre-commit && pre-commit install"
     fi
 fi
@@ -436,17 +407,10 @@ fi
 echo ""
 echo -e "${BLUE}=== 7. Verify ===${NC}"
 
-if (cd "$PROJECT_ROOT/backend" && go build ./... 2>/dev/null); then
-    success "Backend build passed"
-else
-    warn "Backend build failed (database config may be missing)"
-fi
-
-if [[ -d "$PROJECT_ROOT/frontend/node_modules" ]]; then
-    success "Frontend node_modules installed"
-else
-    warn "Frontend node_modules not found"
-fi
+(cd "$PROJECT_ROOT/backend" && go build ./...)
+success "Backend build passed"
+(cd "$PROJECT_ROOT/frontend" && npm run typecheck)
+success "Frontend type check passed"
 
 # ============================================
 # Done

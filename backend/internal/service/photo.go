@@ -138,7 +138,7 @@ func (s *PhotoService) CreateFromUpload(userID, title, imageURL string) (*dto.Ph
 
 func (s *PhotoService) GeneratePhoto(ctx context.Context, userID string, req dto.GeneratePhotoRequest) (*dto.PhotoResponse, error) {
 	if s.imageModel == "" {
-		return nil, fmt.Errorf("image generation is not configured")
+		return nil, openai.ErrImageNotConfigured
 	}
 
 	familyIDs := s.getFamilyIDs(userID)

@@ -17,12 +17,15 @@ cd MomShell
 
 The setup script:
 - Checks prerequisites (Go, Node, npm, git)
+- Prepares the local PostgreSQL database on first setup
 - Creates `.env` from template with auto-generated JWT secret
 - Downloads Go dependencies
 - Installs npm packages
 - Installs pre-commit hooks
 
 ## Start the Application
+
+Start the PostgreSQL instance configured by `DATABASE_URL` before starting the backend. On Linux with a local systemd PostgreSQL service, `make postgres-up` starts it. Use `make install` to restore dependencies in an existing checkout.
 
 ```bash
 make dev-backend    # Terminal 1 — http://localhost:8000
@@ -39,6 +42,8 @@ make dev-tmux
 | Frontend | http://localhost:5173 |
 | Backend API | http://localhost:8000 |
 | Admin Panel | http://localhost:8000/admin |
+
+The Vite development server proxies the API, admin panel, and uploaded files to the backend. If you change `PORT` in the project `.env`, restart both servers.
 
 ## Create Admin Account
 

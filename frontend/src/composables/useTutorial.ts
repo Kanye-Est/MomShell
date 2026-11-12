@@ -51,21 +51,21 @@ export function useTutorial() {
       },
     },
     {
-      element: "#sprite-star",
+      element: "#sprite-chair",
       popover: {
-        title: "Tasks (恢复目标)",
+        title: "Tasks (伴侣任务)",
         description:
-          "点亮这颗海星，给自己设定一些小目标吧！比如做五分钟冥想或者散步，每天一点点进步。",
+          "点这里查看当天的家庭任务，记录完成情况，或验收伴侣提交的任务。",
         side: "top",
         align: "center",
       },
     },
     {
-      element: "#sprite-conque",
+      element: "#sprite-mailbox",
       popover: {
         title: "Whisper (海螺低语)",
         description:
-          "不想打字时，就对着海螺诉说吧。它会倾听并将你的声音化为文字记录下来。",
+          "把想说的话写进信箱，伴侣可以在这里读到你的悄悄话。",
         side: "top",
         align: "center",
       },

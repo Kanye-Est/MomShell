@@ -23,6 +23,10 @@ export interface Memoir {
   created_at: string
 }
 
+export interface GeneratedMemoir extends Memoir {
+  image_generation_enabled?: boolean
+}
+
 export interface MemoirList {
   memoirs: Memoir[]
   total: number
@@ -44,7 +48,7 @@ export function getMemoirs(limit = 10, offset = 0): Promise<MemoirList> {
   return apiClient.get('/api/v1/echo/memoirs', { params: { limit, offset } }).then((r) => r.data)
 }
 
-export function generateMemoir(theme?: string): Promise<Memoir> {
+export function generateMemoir(theme?: string): Promise<GeneratedMemoir> {
   return apiClient.post('/api/v1/echo/memoirs/generate', theme ? { theme } : {}).then((r) => r.data)
 }
 

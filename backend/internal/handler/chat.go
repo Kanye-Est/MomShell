@@ -28,7 +28,7 @@ func (h *ChatHandler) Chat(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	resp, err := h.chatService.Chat(c.Request.Context(), req, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondWithAIError(c, http.StatusInternalServerError, err)
 		return
 	}
 

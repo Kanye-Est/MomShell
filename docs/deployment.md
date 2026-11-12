@@ -2,31 +2,22 @@
 
 ## Prerequisites
 
-```bash
-# Arch Linux
-sudo pacman -S docker docker-compose
-
-# Ubuntu/Debian
-sudo apt install docker.io docker-compose
-
-sudo systemctl start docker
-sudo systemctl enable docker
-```
+Install Docker Engine, Buildx and the Compose plugin, then start the Docker daemon. [Docker installation guide](https://docs.docker.com/engine/install/)
 
 ## Quick Start (Docker Compose)
 
 ```bash
 # 1. Configure environment
 cp .env.example .env
-# Edit .env: uncomment the Docker DATABASE_URL line (postgres host)
-# Set JWT_SECRET_KEY, OPENAI_API_KEY, etc.
+# Set POSTGRES_PASSWORD and JWT_SECRET_KEY in .env.
+# Set OPENAI_API_KEY to enable AI features.
 
 # 2. Start all services
 make docker-up
 
 # 3. Access
-# App:          http://localhost
-# Admin panel:  http://localhost/admin
+# App           http://localhost:7860
+# Admin panel   http://localhost:7860/admin
 ```
 
 ## Architecture
@@ -34,7 +25,7 @@ make docker-up
 A single Docker image contains both frontend and backend:
 
 ```
-Browser → Nginx (:80)
+Browser → Nginx (:7860)
             ├── /            → static files (Vue SPA)
             ├── /api/        → proxy → Go backend (:8000)
             ├── /uploads/    → proxy → Go backend (:8000)
@@ -45,11 +36,11 @@ Browser → Nginx (:80)
 
 | Service | Image | Port |
 |---------|-------|------|
-| **app** | Nginx + Go binary (single image) | 80 (exposed) |
+| **app** | Nginx + Go binary (single image) | 7860 (published) |
 | **postgres** | PostgreSQL 16 | 5432 (internal) |
 
 The root `Dockerfile` uses multi-stage builds:
-1. **frontend-builder** — Node 24, `npm ci && npm run build` → `dist/`
+1. **frontend-builder** — Node 24, `npm ci --ignore-scripts` and `npm run build` produce `dist/`
 2. **backend-builder** — Go 1.25, `go build` → binary
 3. **final** — Nginx Alpine + Go binary + entrypoint script
 
@@ -59,10 +50,12 @@ For single-container platforms like ModelScope Studios, the Dockerfile also supp
 
 ```bash
 docker build -t momshell .
-docker run -d -p 7860:7860 --env-file .env momshell
+docker run -d -p 7860:7860 --env-file .env -e DATABASE_URL= \
+  -v momshell-db:/var/lib/postgresql/data \
+  -v momshell-uploads:/app/uploads momshell
 ```
 
-The entrypoint script (`deploy/entrypoint.sh`) auto-initializes PostgreSQL (initdb, create user/db) when no external database is configured. Nginx listens on port 7860 in this mode.
+The entrypoint initializes the embedded database when `DATABASE_URL` is empty. Supply an external PostgreSQL connection string in `DATABASE_URL` to use a separate database in standalone deployments.
 
 ## Make Commands
 
@@ -79,7 +72,7 @@ Key environment variables for deployment:
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | `postgres://momshell:momshell@postgres:5432/momshell?sslmode=disable` |
+| `DATABASE_URL` | Connection string for local development or standalone deployments. Compose configures its own PostgreSQL connection from `POSTGRES_*`. |
 | `POSTGRES_USER` | PostgreSQL container user (default: momshell) |
 | `POSTGRES_PASSWORD` | PostgreSQL container password (default: momshell) |
 | `POSTGRES_DB` | PostgreSQL container database (default: momshell) |
@@ -87,19 +80,15 @@ Key environment variables for deployment:
 | `OPENAI_API_KEY` | LLM API key |
 | `PORT` | Backend server port (default: 8000, internal) |
 
-`VITE_API_BASE_URL` is not needed in Docker — Nginx proxies `/api/` to the backend within the same container.
+Nginx serves the app and proxies API requests on the same origin by default.
 
 See [Configuration](configuration.md) for the full reference.
 
 ## Data Persistence
 
-PostgreSQL data is stored in a Docker named volume `pgdata`. To reset:
+Compose stores the database in `pgdata` and uploaded files in `uploads`. Both volumes persist across `make docker-down` and `make docker-up`.
 
-```bash
-make docker-down
-docker volume rm deploy_pgdata
-make docker-up
-```
+For an older combined container, copy its `/uploads` directory before recreating the container. Restore the files into the new volume mounted at `/app/uploads`.
 
 ---
 

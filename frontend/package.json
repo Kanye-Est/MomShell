@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "vue-tsc --noEmit -p tsconfig.node.json",
-    "render-sand": "tsx assets/render-sand.ts"
+    "render-sand": "tsx scripts/render-sand.ts"
   },
   "dependencies": {
     "@mediapipe/camera_utils": "^0.3.1675466862",
@@ -33,7 +33,7 @@
     "@vitejs/plugin-vue": "^6.0.5",
     "eslint": "^10.0.3",
     "eslint-plugin-vue": "^10.8.0",
-    "puppeteer": "^24.39.1",
+    "puppeteer": "^25.17.0",
     "tsx": "^4.21.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.0",

@@ -10,7 +10,8 @@ ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
 FROM nginx:alpine
+ENV MOMSHELL_HTTP_PORT=80 MOMSHELL_BACKEND=host.docker.internal:8000 NGINX_ENVSUBST_FILTER=^MOMSHELL_
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]

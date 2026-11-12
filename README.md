@@ -23,7 +23,7 @@ AI-powered wellness platform combining emotional companionship, community suppor
 | **Sisterhood Bond** | Community Q&A with verified healthcare professionals and content moderation        |
 | **Echo / Memoir**   | Self-reflection space with AI-generated memoir stickers and partner connection     |
 | **Photo Gallery**   | Photo wall with AI-generated images, lifecycle management, and drag/zoom UI        |
-| **Whisper**         | Audio-to-text conversation using speech recognition                                |
+| **Whisper**         | Private text messages between partners, with optional AI suggestions             |
 | **Tasks / Dad Console** | Daily task board with T0/T1/T2 priority, proof photos, partner review, XP/level, skill radar + achievements, perk cards, and blind-box shell gifts |
 | **Mobile & PWA**    | Responsive mobile layout with portrait/landscape sprite configs, touch gestures, dynamic viewport units, and offline-capable service worker |
 | **Admin Panel**     | Embedded single-page admin at `/admin` — dashboard, user CRUD, config management   |
@@ -70,8 +70,8 @@ MomShell/
 ## Docker Deployment
 
 ```bash
-cp .env.example .env    # Edit with your config
-make docker-build-backend
+cp .env.example .env    # Set POSTGRES_PASSWORD and JWT_SECRET_KEY
+make docker-up          # http://localhost:7860
 ```
 
 [Full deployment guide](docs/deployment.md)

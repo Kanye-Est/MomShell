@@ -40,7 +40,7 @@
       <!-- Result -->
       <div v-if="result" class="result-card">
         <div v-if="generatingImage" class="result-img-loading">图片生成中...</div>
-        <img v-else-if="generatedImageUrl" :src="generatedImageUrl" alt="" class="result-img" />
+        <img v-else-if="resultImageUrl" :src="resultImageUrl" alt="" class="result-img" />
         <div class="result-body">
           <h3 v-if="!editingResult" class="result-title">{{ result.title }}</h3>
           <input v-else v-model="editTitle" class="result-title-input" placeholder="标题" />
@@ -49,7 +49,7 @@
           <div class="result-actions">
             <template v-if="!editingResult">
               <button class="result-action-btn" @click="startEdit">编辑文字</button>
-              <button class="result-action-btn accent" :disabled="generatingImage" @click="onRegenerateImage">
+              <button v-if="result.image_generation_enabled !== false" class="result-action-btn accent" :disabled="generatingImage" @click="onRegenerateImage">
                 {{ generatingImage ? '生成中...' : '重新生成图片' }}
               </button>
             </template>
@@ -73,7 +73,7 @@ import {
   generateMemoir,
   type IdentityTag,
   type IdentityTagList,
-  type Memoir,
+  type GeneratedMemoir,
 } from '@/lib/api/echo'
 import { generatePhoto, deletePhoto } from '@/lib/api/photo'
 import { getErrorMessage } from '@/lib/apiClient'
@@ -88,7 +88,8 @@ const generating = ref(false)
 const generatingImage = ref(false)
 const generatedImageUrl = ref('')
 const generatedPhotoId = ref<string | null>(null)
-const result = ref<Memoir | null>(null)
+const result = ref<GeneratedMemoir | null>(null)
+const resultImageUrl = computed(() => generatedImageUrl.value || result.value?.cover_image_url)
 const error = ref('')
 const editingResult = ref(false)
 const editTitle = ref('')
@@ -145,8 +146,9 @@ async function onGenerate() {
     result.value = memoir
     editingResult.value = false
 
-    // Generate an AI photo based on the memoir content
-    triggerImageGeneration(memoir.content || memoir.title || theme || '记忆贴纸')
+    if (memoir.image_generation_enabled !== false) {
+      triggerImageGeneration(memoir.content || memoir.title || theme || '记忆贴纸')
+    }
   } catch (e) {
     error.value = getErrorMessage(e)
   } finally {
@@ -171,7 +173,7 @@ function triggerImageGeneration(prompt: string) {
       generatedPhotoId.value = photo.id
     })
     .catch(() => {
-      // Photo generation failed; leave image area empty
+      // The result falls back to the built-in cover.
     })
     .finally(() => {
       generatingImage.value = false

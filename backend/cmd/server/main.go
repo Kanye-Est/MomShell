@@ -67,12 +67,12 @@ func main() {
 		moderationService,
 	)
 
-	var chatClient *openai.Client
-	if cfg.OpenAIAPIKey != "" {
-		chatClient = openai.NewClient(cfg.OpenAIAPIKey, cfg.OpenAIBaseURL, cfg.OpenAIModel)
-	} else {
-		log.Println("[WARN] OPENAI_API_KEY not set, chat and AI task generation will not work")
-		chatClient = openai.NewClient("dummy", cfg.OpenAIBaseURL, cfg.OpenAIModel)
+	chatClient := openai.NewRuntimeClient(func() (string, string, string) {
+		settings := cfg.Runtime()
+		return settings.OpenAIAPIKey, settings.OpenAIBaseURL, settings.OpenAIModel
+	})
+	if !chatClient.Enabled() {
+		log.Println("[WARN] OPENAI_API_KEY not set. AI features require an API key.")
 	}
 
 	var firecrawlClient *firecrawl.Client
@@ -85,27 +85,17 @@ func main() {
 	photoService := service.NewPhotoService(photoRepo, userRepo, chatClient, cfg.ImageModel)
 	whisperService := service.NewWhisperService(whisperRepo, userRepo, chatClient)
 
-	// Pass nil to shell gift service when no real API key — avoids dummy client network calls
-	var shellGiftAIClient *openai.Client
-	if cfg.OpenAIAPIKey != "" {
-		shellGiftAIClient = chatClient
-	}
-	shellGiftService := service.NewShellGiftService(shellGiftRepo, userRepo, shellGiftAIClient)
+	shellGiftService := service.NewShellGiftService(shellGiftRepo, userRepo, chatClient)
 
 	achievementService := service.NewAchievementService(taskRepo, achievementRepo, userRepo)
 	perkCardService := service.NewPerkCardService(perkCardRepo, userRepo)
 
-	// Pass nil to task service when no real API key — avoids dummy client network calls
-	var taskAIClient *openai.Client
-	if cfg.OpenAIAPIKey != "" {
-		taskAIClient = chatClient
-	}
-	taskService := service.NewTaskService(taskRepo, userRepo, chatRepo, taskAIClient, shellGiftService, achievementService)
+	taskService := service.NewTaskService(taskRepo, userRepo, chatRepo, chatClient, shellGiftService, achievementService)
 
 	// Ensure AI user exists for community AI replies
 	aiUserID := ensureAIUser(userRepo)
 	var communityAIService *service.CommunityAIService
-	if aiUserID != "" && cfg.OpenAIAPIKey != "" {
+	if aiUserID != "" {
 		communityAIService = service.NewCommunityAIService(
 			chatClient, firecrawlClient,
 			questionRepo, answerRepo, commentRepo,
@@ -126,14 +116,14 @@ func main() {
 	scheduler.StartPhotoCleanup(photoRepo)
 
 	// Initialize handlers
-	authHandler := handler.NewAuthHandler(authService, cfg)
+	authHandler := handler.NewAuthHandler(authService)
 	questionHandler := handler.NewQuestionHandler(communityService, authService, communityAIService)
 	answerHandler := handler.NewAnswerHandler(communityService, authService, communityAIService)
 	commentHandler := handler.NewCommentHandler(communityService, authService, communityAIService)
 	interactionHandler := handler.NewInteractionHandler(communityService)
 	tagHandler := handler.NewTagHandler(communityService)
 	chatHandler := handler.NewChatHandler(chatService)
-	echoHandler := handler.NewEchoHandler(echoService)
+	echoHandler := handler.NewEchoHandler(echoService, cfg.ImageModel != "")
 	userHandler := handler.NewUserHandler(userService)
 	adminHandler := handler.NewAdminHandler(adminService, authService)
 	photoHandler := handler.NewPhotoHandler(photoService)
@@ -144,7 +134,9 @@ func main() {
 
 	// Setup Gin
 	r := gin.New()
-	_ = r.SetTrustedProxies(nil) // Don't trust any proxy headers by default
+	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		log.Fatalf("Invalid TRUSTED_PROXIES: %v", err)
+	}
 	r.Use(middleware.Recovery())
 	r.Use(middleware.SecurityHeaders())
 	r.Use(middleware.CORS(cfg))

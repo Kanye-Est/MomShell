@@ -28,16 +28,29 @@ func (r *TaskRepo) CreateTemplate(t *model.DailyTask) error {
 	return r.db.Create(t).Error
 }
 
-func (r *TaskRepo) FindRandomTemplates(count int) ([]model.DailyTask, error) {
+func (r *TaskRepo) FindRandomTemplates(count int, excludeIDs []string) ([]model.DailyTask, error) {
 	var tasks []model.DailyTask
-	err := r.db.Order("RANDOM()").Limit(count).Find(&tasks).Error
+	query := r.db.Order("RANDOM()").Limit(count)
+	if len(excludeIDs) > 0 {
+		query = query.Where("id NOT IN ?", excludeIDs)
+	}
+	err := query.Find(&tasks).Error
 	return tasks, err
 }
 
 // UserTask operations
 
-func (r *TaskRepo) CreateUserTask(ut *model.UserTask) error {
-	return r.db.Create(ut).Error
+func (r *TaskRepo) WithDailyTaskLock(userID string, run func(tx *gorm.DB) error) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(589023418, hashtext(?))", userID).Error; err != nil {
+			return err
+		}
+		return run(tx)
+	})
+}
+
+func (r *TaskRepo) CreateUserTasks(tasks []model.UserTask) error {
+	return r.db.Create(&tasks).Error
 }
 
 func (r *TaskRepo) FindUserTasksByDate(userID string, date time.Time) ([]model.UserTask, error) {
@@ -58,20 +71,18 @@ func (r *TaskRepo) FindUserTaskByID(id string) (*model.UserTask, error) {
 	return &task, nil
 }
 
-func (r *TaskRepo) UpdateUserTask(ut *model.UserTask) error {
-	return r.db.Save(ut).Error
-}
-
-// ResetUserTaskToPending clears completed_at and sets status back to pending.
-func (r *TaskRepo) ResetUserTaskToPending(ut *model.UserTask) error {
-	return r.db.Model(ut).
-		Select("status", "completed_at", "comment", "proof_photo_url").
-		Updates(map[string]interface{}{
-			"status":          ut.Status,
-			"completed_at":    nil,
-			"comment":         ut.Comment,
-			"proof_photo_url": nil,
-		}).Error
+func (r *TaskRepo) UpdateUserTask(ut *model.UserTask, previousStatus model.TaskStatus) error {
+	result := r.db.Model(ut).
+		Where("status = ?", previousStatus).
+		Select("status", "completed_at", "proof_photo_url", "score", "comment", "scored_by_id", "scored_at").
+		Updates(ut)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *TaskRepo) SumScoreByUserID(userID string) (int, error) {
@@ -130,7 +141,7 @@ func (r *TaskRepo) DeleteAICacheByCouple(coupleKey, date string) error {
 		Delete(&model.AIGeneratedTask{}).Error
 }
 
-func (r *TaskRepo) DeletePendingUserTasksByDate(userID string, date time.Time) error {
-	return r.db.Where("user_id = ? AND date = ? AND status = ?", userID, date.Format("2006-01-02"), model.TaskPending).
+func (r *TaskRepo) DeletePendingUserTasksByDate(userIDs []string, date time.Time) error {
+	return r.db.Where("user_id IN ? AND date = ? AND status = ?", userIDs, date.Format("2006-01-02"), model.TaskPending).
 		Delete(&model.UserTask{}).Error
 }

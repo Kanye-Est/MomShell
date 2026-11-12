@@ -11,12 +11,15 @@ import (
 	"github.com/momshell/backend/internal/model"
 	"github.com/momshell/backend/internal/repository"
 	"github.com/momshell/backend/pkg/openai"
+	"gorm.io/gorm"
 )
 
 const (
 	errUserNotFound    = "用户不存在"
 	errPartnerRequired = "请先完成伴侣绑定"
 	errTaskNotFound    = "任务不存在"
+	errTaskChanged     = "任务状态已更新，请刷新后重试"
+	dailyTaskCount     = 4
 )
 
 type TaskService struct {
@@ -64,24 +67,7 @@ func (s *TaskService) GetDailyTasks(userID string) ([]dto.UserTaskItem, error) {
 		return nil, errors.New(errPartnerRequired)
 	}
 
-	date := today()
-	tasks, err := s.taskRepo.FindUserTasksByDate(userID, date)
-	if err != nil {
-		return nil, err
-	}
-
-	// Lazy initialization: assign tasks for today
-	if len(tasks) == 0 {
-		if err := s.createTasksForUser(user, userID, date); err != nil {
-			return []dto.UserTaskItem{}, nil
-		}
-		tasks, err = s.taskRepo.FindUserTasksByDate(userID, date)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return toTaskItems(tasks), nil
+	return s.dailyTaskItems(userID)
 }
 
 // CompleteTask marks a task as completed by the Dad user.
@@ -105,7 +91,7 @@ func (s *TaskService) CompleteTask(userID, taskID string, proofPhotoURL *string)
 		ut.ProofPhotoURL = proofPhotoURL
 	}
 
-	if err := s.taskRepo.UpdateUserTask(ut); err != nil {
+	if err := s.updateTaskStatus(ut, model.TaskPending); err != nil {
 		return nil, err
 	}
 
@@ -136,28 +122,7 @@ func (s *TaskService) GetPartnerTasks(callerID string) ([]dto.UserTaskItem, erro
 		return nil, errors.New(errPartnerRequired)
 	}
 
-	date := today()
-	tasks, err := s.taskRepo.FindUserTasksByDate(*user.PartnerID, date)
-	if err != nil {
-		return nil, err
-	}
-
-	// Lazily assign tasks for partner if none exist today
-	if len(tasks) == 0 {
-		partner, pErr := s.userRepo.FindByID(*user.PartnerID)
-		if pErr != nil {
-			return []dto.UserTaskItem{}, nil
-		}
-		if err := s.createTasksForUser(partner, *user.PartnerID, date); err != nil {
-			return []dto.UserTaskItem{}, nil
-		}
-		tasks, err = s.taskRepo.FindUserTasksByDate(*user.PartnerID, date)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return toTaskItems(tasks), nil
+	return s.dailyTaskItems(*user.PartnerID)
 }
 
 // ScoreTask allows Mom to verify and score a completed task.
@@ -193,7 +158,7 @@ func (s *TaskService) ScoreTask(callerID, taskID string, req dto.TaskScore) (*dt
 	ut.ScoredByID = &callerID
 	ut.ScoredAt = &now
 
-	if err := s.taskRepo.UpdateUserTask(ut); err != nil {
+	if err := s.updateTaskStatus(ut, model.TaskCompleted); err != nil {
 		return nil, err
 	}
 
@@ -238,12 +203,20 @@ func (s *TaskService) RejectTask(callerID, taskID string, comment string) (*dto.
 		ut.Comment = &comment
 	}
 
-	if err := s.taskRepo.ResetUserTaskToPending(ut); err != nil {
+	if err := s.updateTaskStatus(ut, model.TaskCompleted); err != nil {
 		return nil, err
 	}
 
 	item := toTaskItem(*ut)
 	return &item, nil
+}
+
+func (s *TaskService) updateTaskStatus(task *model.UserTask, previousStatus model.TaskStatus) error {
+	err := s.taskRepo.UpdateUserTask(task, previousStatus)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return errors.New(errTaskChanged)
+	}
+	return err
 }
 
 // GetTaskStats returns XP and level for a user (Dad).
@@ -322,62 +295,85 @@ func toTaskItems(tasks []model.UserTask) []dto.UserTaskItem {
 	return items
 }
 
-// createTasksForUser creates today's tasks for a user.
-// Uses AI generation if age stage is available, otherwise falls back to templates.
-func (s *TaskService) createTasksForUser(user *model.User, userID string, date time.Time) error {
-	// Try AI generation
-	if s.openaiClient != nil && user.PartnerID != nil {
-		stage, _ := resolveAgeStage(user, s.userRepo, s.chatRepo)
-		if stage != "" {
-			ck := coupleKey(userID, *user.PartnerID)
-			dateStr := date.Format("2006-01-02")
-			aiTasks, err := getOrGenerateAITasks(s.openaiClient, s.taskRepo, ck, dateStr, stage)
-			if err == nil && len(aiTasks) > 0 {
-				for _, at := range aiTasks {
-					ut := &model.UserTask{
-						UserID:        userID,
-						Date:          date,
-						Status:        model.TaskPending,
-						Source:        model.TaskSourceAI,
-						AITitle:       at.Title,
-						AIDescription: at.Description,
-						AICategory:    at.Category,
-						AIDifficulty:  at.Difficulty,
-						Priority:      model.TaskPriority(at.Priority),
-					}
-					if ut.Priority == "" {
-						ut.Priority = model.PriorityT2
-					}
-					_ = s.taskRepo.CreateUserTask(ut)
-				}
-				return nil
-			}
-			// AI failed — fall through to template
-		}
+func (s *TaskService) dailyTaskItems(userID string) ([]dto.UserTaskItem, error) {
+	date := today()
+	tasks, err := s.taskRepo.FindUserTasksByDate(userID, date)
+	if err != nil || len(tasks) >= dailyTaskCount {
+		return toTaskItems(tasks), err
 	}
 
-	// Fallback: random templates
-	templates, err := s.taskRepo.FindRandomTemplates(4)
-	if err != nil || len(templates) == 0 {
-		return fmt.Errorf("no templates available")
-	}
-	for _, tmpl := range templates {
-		tid := tmpl.ID
-		priority := tmpl.Priority
-		if priority == "" {
-			priority = model.PriorityT2
+	err = s.taskRepo.WithDailyTaskLock(userID, func(tx *gorm.DB) error {
+		repo := repository.NewTaskRepo(tx)
+		tasks, err = repo.FindUserTasksByDate(userID, date)
+		if err != nil || len(tasks) >= dailyTaskCount {
+			return err
 		}
-		ut := &model.UserTask{
-			UserID:   userID,
-			TaskID:   &tid,
-			Date:     date,
-			Status:   model.TaskPending,
-			Source:   model.TaskSourceTemplate,
-			Priority: priority,
+
+		users := repository.NewUserRepo(tx)
+		user, err := users.FindByID(userID)
+		if err != nil {
+			return err
 		}
-		_ = s.taskRepo.CreateUserTask(ut)
+		stage, _ := resolveAgeStage(user, users, repository.NewChatRepo(tx))
+		var aiTasks []AITaskData
+		if s.openaiClient.Enabled() && stage != "" && user.PartnerID != nil {
+			key := coupleKey(userID, *user.PartnerID)
+			aiTasks, err = getOrGenerateAITasks(s.openaiClient, repo, key, date.Format("2006-01-02"), stage)
+			if err != nil {
+				log.Printf("[TaskService] Using task templates: %v", err)
+			}
+		}
+		if err := assignDailyTasks(repo, userID, date, tasks, aiTasks); err != nil {
+			return err
+		}
+		tasks, err = repo.FindUserTasksByDate(userID, date)
+		return err
+	})
+	return toTaskItems(tasks), err
+}
+
+func assignDailyTasks(repo *repository.TaskRepo, userID string, date time.Time, existing []model.UserTask, aiTasks []AITaskData) error {
+	var excludeIDs []string
+	titles := make(map[string]bool, len(existing)+len(aiTasks))
+	for _, task := range existing {
+		if task.TaskID != nil {
+			excludeIDs = append(excludeIDs, *task.TaskID)
+		}
+		titles[toTaskItem(task).Title] = true
 	}
-	return nil
+
+	var pending []model.UserTask
+	for _, task := range aiTasks {
+		if len(existing)+len(pending) >= len(aiTasks) {
+			break
+		}
+		if titles[task.Title] {
+			continue
+		}
+		titles[task.Title] = true
+		pending = append(pending, model.UserTask{
+			UserID: userID, Date: date, Status: model.TaskPending, Source: model.TaskSourceAI,
+			AITitle: task.Title, AIDescription: task.Description, AICategory: task.Category,
+			AIDifficulty: task.Difficulty, Priority: model.TaskPriority(task.Priority),
+		})
+	}
+
+	if remaining := dailyTaskCount - len(existing) - len(pending); remaining > 0 {
+		templates, err := repo.FindRandomTemplates(remaining, excludeIDs)
+		if err != nil {
+			return err
+		}
+		for _, task := range templates {
+			pending = append(pending, model.UserTask{
+				UserID: userID, TaskID: &task.ID, Date: date, Status: model.TaskPending,
+				Source: model.TaskSourceTemplate, Priority: task.Priority,
+			})
+		}
+	}
+	if len(pending) == 0 {
+		return fmt.Errorf("没有可分配的任务模板")
+	}
+	return repo.CreateUserTasks(pending)
 }
 
 // SetBabyAge sets the baby age stage for the user and immediately regenerates tasks.
@@ -387,22 +383,32 @@ func (s *TaskService) SetBabyAge(userID, ageStage string) error {
 		return errors.New(errUserNotFound)
 	}
 
-	user.BabyAgeStage = &ageStage
-	if err := s.userRepo.Update(user); err != nil {
+	taskOwner := userID
+	family := []string{userID}
+	if user.PartnerID != nil {
+		family = append(family, *user.PartnerID)
+		if user.Role == model.RoleMom {
+			taskOwner = *user.PartnerID
+		}
+	}
+
+	date := today()
+	if err := s.taskRepo.WithDailyTaskLock(taskOwner, func(tx *gorm.DB) error {
+		if err := tx.Model(&model.User{}).Where("id IN ?", family).Update("baby_age_stage", ageStage).Error; err != nil {
+			return err
+		}
+		repo := repository.NewTaskRepo(tx)
+		if user.PartnerID != nil {
+			key := coupleKey(userID, *user.PartnerID)
+			if err := repo.DeleteAICacheByCouple(key, date.Format("2006-01-02")); err != nil {
+				return err
+			}
+		}
+		return repo.DeletePendingUserTasksByDate(family, date)
+	}); err != nil {
+		log.Printf("[TaskService] Could not update baby age: %v", err)
 		return fmt.Errorf("保存失败，请重试")
 	}
-
-	// Immediate regeneration: delete today's pending tasks and AI cache
-	date := today()
-	_ = s.taskRepo.DeletePendingUserTasksByDate(userID, date)
-
-	if user.PartnerID != nil {
-		ck := coupleKey(userID, *user.PartnerID)
-		_ = s.taskRepo.DeleteAICacheByCouple(ck, date.Format("2006-01-02"))
-		// Also clear partner's pending tasks so they get regenerated too
-		_ = s.taskRepo.DeletePendingUserTasksByDate(*user.PartnerID, date)
-	}
-
 	return nil
 }
 

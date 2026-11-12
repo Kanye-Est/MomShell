@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,23 +20,53 @@ const (
 	bearerPrefix         = "Bearer "
 )
 
+var (
+	ErrNotConfigured      = errors.New("AI 服务尚未配置，请联系管理员设置 OPENAI_API_KEY")
+	ErrAuthentication     = errors.New("AI 服务认证失败，请联系管理员更新 OPENAI_API_KEY")
+	ErrImageNotConfigured = errors.New("尚未配置 AI 图片生成")
+)
+
 type Client struct {
-	apiKey  string
-	baseURL string
-	model   string
-	http    *http.Client
+	apiKey          string
+	baseURL         string
+	model           string
+	http            *http.Client
+	runtimeSettings func() (apiKey, baseURL, model string)
 }
 
 func NewClient(apiKey, baseURL, model string) *Client {
-	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
-	}
 	return &Client{
-		apiKey:  apiKey,
-		baseURL: baseURL,
+		apiKey:  strings.TrimSpace(apiKey),
+		baseURL: normalizeBaseURL(baseURL),
 		model:   model,
 		http:    &http.Client{Timeout: 60 * time.Second},
 	}
+}
+
+func NewRuntimeClient(settings func() (apiKey, baseURL, model string)) *Client {
+	c := NewClient("", "", "")
+	c.runtimeSettings = settings
+	return c
+}
+
+func normalizeBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		return "https://api.openai.com/v1"
+	}
+	return baseURL
+}
+
+func (c *Client) snapshot() *Client {
+	if c.runtimeSettings == nil {
+		return c
+	}
+	key, baseURL, model := c.runtimeSettings()
+	return &Client{apiKey: strings.TrimSpace(key), baseURL: normalizeBaseURL(baseURL), model: model, http: c.http}
+}
+
+func (c *Client) Enabled() bool {
+	return c != nil && c.snapshot().apiKey != ""
 }
 
 type Message struct {
@@ -63,6 +94,11 @@ type chatResponse struct {
 }
 
 func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
+	c = c.snapshot()
+	if c.apiKey == "" {
+		return "", ErrNotConfigured
+	}
+
 	reqBody := chatRequest{
 		Model:          c.model,
 		Messages:       messages,
@@ -95,6 +131,9 @@ func (c *Client) Chat(ctx context.Context, messages []Message) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if isAuthenticationFailure(resp.StatusCode) {
+			return "", ErrAuthentication
+		}
 		return "", fmt.Errorf("openai chat completion failed: status %d, body_len: %d",
 			resp.StatusCode, len(respBody))
 	}
@@ -162,6 +201,11 @@ func (c *Client) handleAsyncTask(ctx context.Context, respBody []byte) (*ImageRe
 }
 
 func (c *Client) GenerateImage(ctx context.Context, model, prompt string) (*ImageResponse, error) {
+	c = c.snapshot()
+	if c.apiKey == "" {
+		return nil, ErrNotConfigured
+	}
+
 	reqBody := imageRequest{
 		Model:             model,
 		Prompt:            prompt,
@@ -198,6 +242,9 @@ func (c *Client) GenerateImage(ctx context.Context, model, prompt string) (*Imag
 	log.Printf("[ImageGen] model=%s POST status=%d body_len=%d", model, resp.StatusCode, len(respBody))
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		if isAuthenticationFailure(resp.StatusCode) {
+			return nil, ErrAuthentication
+		}
 		return nil, fmt.Errorf("image generation failed: status code: %d, body_len: %d",
 			resp.StatusCode, len(respBody))
 	}
@@ -328,6 +375,9 @@ func (c *Client) pollImageTask(ctx context.Context, taskID string) (*ImageRespon
 		}
 
 		log.Printf("[ImageGen] poll #%d status=%d body_len=%d", i+1, resp.StatusCode, len(respBody))
+		if isAuthenticationFailure(resp.StatusCode) {
+			return nil, ErrAuthentication
+		}
 
 		var status taskStatusResponse
 		if err := json.Unmarshal(respBody, &status); err != nil {
@@ -341,4 +391,8 @@ func (c *Client) pollImageTask(ctx context.Context, taskID string) (*ImageRespon
 	}
 
 	return nil, fmt.Errorf("image generation timed out after polling")
+}
+
+func isAuthenticationFailure(status int) bool {
+	return status == http.StatusUnauthorized || status == http.StatusForbidden
 }

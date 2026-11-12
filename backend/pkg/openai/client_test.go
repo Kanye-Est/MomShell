@@ -3,11 +3,46 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestRuntimeClientUsesLatestSettings(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("unexpected request path %q", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer new-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		var req chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Model != "new-model" {
+			t.Errorf("unexpected request model %q or decode error %v", req.Model, err)
+		}
+		_, _ = fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
+	var key string
+	model := "old-model"
+	client := NewRuntimeClient(func() (string, string, string) { return key, srv.URL + "/v1/", model })
+	ctx := context.Background()
+	if _, err := client.Chat(ctx, nil); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("expected missing key error, got %v", err)
+	}
+	key = "old-key"
+	if _, err := client.Chat(ctx, nil); !errors.Is(err, ErrAuthentication) {
+		t.Fatalf("expected authentication error, got %v", err)
+	}
+	key, model = "new-key", "new-model"
+	if text, err := client.Chat(ctx, nil); err != nil || text != "ok" {
+		t.Fatalf("expected updated settings to return ok, got %q and %v", text, err)
+	}
+}
 
 func TestExtractImagesFromTaskStatus_NotSucceed(t *testing.T) {
 	statuses := []string{"PENDING", "RUNNING", "FAILED", "failed", ""}

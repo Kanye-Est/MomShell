@@ -3,14 +3,17 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/momshell/backend/internal/model"
 	"github.com/momshell/backend/internal/repository"
 	"github.com/momshell/backend/pkg/openai"
+	"gorm.io/gorm"
 )
 
 // AITaskData represents a single AI-generated task before being persisted.
@@ -195,25 +198,29 @@ func normalizeAITasks(tasks []AITaskData) []AITaskData {
 		"T0": true, "T1": true, "T2": true,
 	}
 
-	for i := range tasks {
-		tasks[i].Category = strings.ToLower(strings.TrimSpace(tasks[i].Category))
-		if !validCategories[tasks[i].Category] {
-			tasks[i].Category = "parenting"
+	normalized := make([]AITaskData, 0, min(len(tasks), 5))
+	seen := make(map[string]bool)
+	for _, task := range tasks {
+		task.Title = strings.TrimSpace(task.Title)
+		if task.Title == "" || utf8.RuneCountInString(task.Title) > 200 || seen[task.Title] {
+			continue
 		}
-		if tasks[i].Difficulty < 1 {
-			tasks[i].Difficulty = 1
+		seen[task.Title] = true
+		task.Category = strings.ToLower(strings.TrimSpace(task.Category))
+		if !validCategories[task.Category] {
+			task.Category = "parenting"
 		}
-		if tasks[i].Difficulty > 5 {
-			tasks[i].Difficulty = 5
+		task.Difficulty = max(1, min(5, task.Difficulty))
+		task.Priority = strings.ToUpper(strings.TrimSpace(task.Priority))
+		if !validPriorities[task.Priority] {
+			task.Priority = "T2"
 		}
-
-		tasks[i].Priority = strings.ToUpper(strings.TrimSpace(tasks[i].Priority))
-		if !validPriorities[tasks[i].Priority] {
-			tasks[i].Priority = "T2"
+		normalized = append(normalized, task)
+		if len(normalized) == 5 {
+			break
 		}
 	}
-
-	return tasks
+	return normalized
 }
 
 // getOrGenerateAITasks checks cache first, then generates if needed.
@@ -226,20 +233,28 @@ func getOrGenerateAITasks(
 ) ([]AITaskData, error) {
 	// Check cache
 	cache, err := taskRepo.FindAICache(ck, date)
-	if err == nil && cache != nil {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if cache != nil {
 		var tasks []AITaskData
-		if err := json.Unmarshal([]byte(cache.TasksJSON), &tasks); err == nil {
-			return normalizeAITasks(tasks), nil
+		if cache.AgeStage == ageStage && json.Unmarshal([]byte(cache.TasksJSON), &tasks) == nil {
+			if tasks = normalizeAITasks(tasks); len(tasks) > 0 {
+				return tasks, nil
+			}
 		}
-		// Bad cache entry — delete it so the unique index won't block re-save
-		log.Printf("[TaskAI] cache parse error for %s/%s, deleting and regenerating", ck, date)
-		_ = taskRepo.DeleteAICacheByCouple(ck, date)
+		if err := taskRepo.DeleteAICacheByCouple(ck, date); err != nil {
+			return nil, err
+		}
 	}
 
 	// Generate
 	tasks, err := generateAITasks(client, ageStage)
 	if err != nil {
 		return nil, err
+	}
+	if len(tasks) == 0 {
+		return nil, fmt.Errorf("AI returned no usable tasks")
 	}
 
 	// Save to cache

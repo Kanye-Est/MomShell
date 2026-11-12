@@ -21,7 +21,8 @@
         <!-- LEFT: Photo Wall -->
         <div class="photo-wall">
           <!-- Dedicated PearlShell activation zone -->
-          <div v-if="!showPearlShell" class="pearl-shell-trigger-zone" @click="activatePearlShell()" />
+          <div v-if="!showPearlShell && !pearlShellUnavailable" class="pearl-shell-trigger-zone" @click="activatePearlShell()" />
+          <p v-if="pearlShellUnavailable" class="photo-wall-status" role="status">此设备的 3D 相册暂不可用，照片可在照片墙或照片集中查看。</p>
 
           <!-- Original grid (visible when PearlShell not active or in fullscreen) -->
           <div v-if="!showPearlShell || pearlShellFullscreen" class="photo-grid">
@@ -42,6 +43,7 @@
               :photo-urls="allPhotoUrls"
               :is-fullscreen="false"
               @request-fullscreen="handleRequestFullscreen"
+              @unavailable="handlePearlShellUnavailable"
             />
             <button class="pearl-shell-close" @click.stop="showPearlShell = false" aria-label="关闭贝壳">✕</button>
           </div>
@@ -99,6 +101,7 @@
             :photo-urls="allPhotoUrls"
             :is-fullscreen="true"
             @exit-fullscreen="handleExitFullscreen"
+            @unavailable="handlePearlShellUnavailable"
           />
         </div>
       </Transition>
@@ -459,7 +462,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, reactive } from 'vue'
+import { ref, computed, watch, nextTick, reactive, defineAsyncComponent } from 'vue'
 import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -487,7 +490,8 @@ import avatarFrame from '@/assets/images/frame.png'
 import avatarDefault from '@/assets/images/avatar.png'
 import boxImg from '@/assets/images/box.png'
 import starImg from '@/assets/images/star.png'
-import PearlShellWrapper from '@/components/react/PearlShellWrapper.vue'
+
+const PearlShellWrapper = defineAsyncComponent(() => import('@/components/react/PearlShellWrapper.vue'))
 
 const uiStore = useUiStore()
 const auth = useAuthStore()
@@ -501,6 +505,7 @@ const modalOrigin = ref<Record<string, string>>({})
 // ── PearlShell state ──
 const showPearlShell = ref(false)
 const pearlShellFullscreen = ref(false)
+const pearlShellUnavailable = ref(false)
 const visible = computed(() => uiStore.activePanel === 'car')
 
 const wallPhotos = computed(() =>
@@ -652,6 +657,7 @@ function close() {
 }
 
 function activatePearlShell() {
+  if (pearlShellUnavailable.value) return
   showPearlShell.value = true
 }
 
@@ -660,6 +666,12 @@ function handleRequestFullscreen() {
 }
 
 function handleExitFullscreen() {
+  pearlShellFullscreen.value = false
+}
+
+function handlePearlShellUnavailable() {
+  pearlShellUnavailable.value = true
+  showPearlShell.value = false
   pearlShellFullscreen.value = false
 }
 
@@ -1130,11 +1142,22 @@ watch(visible, async (isVisible) => {
 .photo-wall {
   position: relative;
   flex: 1;
+  min-width: 0;
   display: flex;
   align-self: stretch;
   align-items: flex-start;
   justify-content: center;
   padding-top: 21vh;
+}
+
+.photo-wall-status {
+  position: absolute;
+  bottom: 12px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(31, 26, 23, 0.8);
+  color: white;
+  font-size: 0.875rem;
 }
 
 /* ── PearlShell Trigger Zone ── */
@@ -1143,8 +1166,8 @@ watch(visible, async (isVisible) => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 936px;
-  height: 544px;
+  width: min(936px, 100%);
+  height: min(544px, calc(100% - 34px));
   margin-top: -17px;
   margin-left: 0px;
   z-index: 1; /* Below photos but above background */
@@ -1237,7 +1260,7 @@ watch(visible, async (isVisible) => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  min-width: 400px;
+  min-width: min(400px, 30vw);
   align-self: stretch;
   padding-top: 18vh;
   margin-right: 8vw;
@@ -2362,8 +2385,8 @@ watch(visible, async (isVisible) => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 936px;
-  height: 544px;
+  width: min(936px, 100%);
+  height: min(544px, calc(100% - 34px));
   margin-top: -17px;
   margin-left: 0px;
   border-radius: 2px;

@@ -4,22 +4,8 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import "@mediapipe/hands";
-import type { Hands as HandsInstance, HandsConfig, Results } from "@mediapipe/hands";
+import type { Hands as HandsInstance, Results } from "@mediapipe/hands";
 import gsap from "gsap";
-
-// @mediapipe/* packages ship as an IIFE that attaches to globalThis (no ESM exports).
-// Vite 8/Rolldown doesn't synthesize named exports, so we use a side-effect import + global.
-type HandsConstructor = new (config?: HandsConfig) => HandsInstance;
-const getHandsCtor = (): HandsConstructor => {
-  const ctor = (globalThis as unknown as { Hands?: HandsConstructor }).Hands;
-  if (!ctor) {
-    throw new Error(
-      "@mediapipe/hands did not attach Hands to globalThis. Ensure the side-effect import runs in a browser context.",
-    );
-  }
-  return ctor;
-};
 
 // --- Performance Tuning Constants ---
 const MEDIAPIPE_MODEL_COMPLEXITY = 0; // 0=lite (fast), 1=standard
@@ -48,6 +34,7 @@ export interface PearlShellProps {
   isFullscreen: boolean;
   onRequestFullscreen?: () => void;
   onExitFullscreen?: () => void;
+  onUnavailable?: () => void;
   showDebug?: boolean;
 }
 
@@ -260,6 +247,7 @@ export default function PearlShell({
   isFullscreen,
   onRequestFullscreen,
   onExitFullscreen,
+  onUnavailable,
   showDebug = false,
 }: Readonly<PearlShellProps>) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -285,7 +273,6 @@ export default function PearlShell({
   const handPositionRef = useRef<{ x: number; y: number }>({ x: 0.5, y: 0.5 });
   const gestureBufferRef = useRef<string[]>([]);
   const stableGestureRef = useRef<string>("UNKNOWN");
-  const streamRef = useRef<MediaStream | null>(null);
   const handTrackingActiveRef = useRef(false);
   const lastCameraFollowTimeRef = useRef(0);
   const GESTURE_STABILITY_FRAMES = 3;
@@ -329,8 +316,8 @@ export default function PearlShell({
 
     const rand = createSeededRandom(42);
 
-    const width = mountRef.current.clientWidth;
-    const height = mountRef.current.clientHeight;
+    const width = Math.max(1, mountRef.current.clientWidth);
+    const height = Math.max(1, mountRef.current.clientHeight);
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xd48a56);
@@ -341,9 +328,17 @@ export default function PearlShell({
     camera.position.set(0, 0, 28);
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    } catch {
+      onUnavailable?.();
+      return;
+    }
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio, 2));
+    const handleContextLost = () => onUnavailable?.();
+    renderer.domElement.addEventListener("webglcontextlost", handleContextLost);
     mountRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
@@ -384,8 +379,6 @@ export default function PearlShell({
 
     // Shells
     const particleCount = 8000;
-    const scaleGeo = new THREE.PlaneGeometry(0.15, 0.15);
-
     const atlasTex = createAtlasTexture();
 
     const shellMat = new THREE.ShaderMaterial({
@@ -405,7 +398,7 @@ export default function PearlShell({
 
     const createShellHalf = (isUpper: boolean) => {
       const instancedMesh = new THREE.InstancedMesh(
-        scaleGeo,
+        new THREE.PlaneGeometry(0.15, 0.15),
         shellMat,
         particleCount,
       );
@@ -516,22 +509,22 @@ export default function PearlShell({
     photoGroupRef.current = photoGroup;
 
     // Animation Loop
-    const clock = new THREE.Clock();
+    const startedAt = performance.now();
     let animFrameId: number;
     const prevShellPos = new THREE.Vector3();
     let lastRenderTime = 0;
 
     const animate = () => {
       animFrameId = requestAnimationFrame(animate);
+      const now = performance.now();
 
       // Throttle to ~30fps when hand tracking is active to reduce GPU contention
       if (handTrackingActiveRef.current) {
-        const now = performance.now();
         if (now - lastRenderTime < RENDER_THROTTLE_MS) return;
         lastRenderTime = now;
       }
 
-      const time = clock.getElapsedTime();
+      const time = (now - startedAt) / 1000;
       stateRef.current.time = time;
 
       if (!isAnimatingCameraRef.current) {
@@ -594,6 +587,7 @@ export default function PearlShell({
       if (!mountRef.current) return;
       const w = mountRef.current.clientWidth;
       const h = mountRef.current.clientHeight;
+      if (!w || !h) return;
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
@@ -607,10 +601,29 @@ export default function PearlShell({
       cancelAnimationFrame(animFrameId);
       controls.dispose();
       resizeObserver.disconnect();
+      photoGroupRef.current = null;
+      for (const object of photoGroup.children) {
+        if (object instanceof THREE.Mesh && object.material instanceof THREE.MeshBasicMaterial) {
+          object.geometry.dispose();
+          object.material.map?.dispose();
+          object.material.dispose();
+        }
+      }
+      for (const shell of [upperShell, lowerShell]) {
+        shell.geometry.dispose();
+        shell.dispose();
+      }
+      shellMat.dispose();
+      atlasTex?.dispose();
+      bloomPass.dispose();
+      composer.dispose();
+      renderer.domElement.removeEventListener("webglcontextlost", handleContextLost);
       renderer.domElement.remove();
       renderer.dispose();
+      renderer.forceContextLoss();
+      rendererRef.current = null;
     };
-  }, []);
+  }, [onUnavailable]);
 
   // Update Photos from props
   useEffect(() => {
@@ -628,6 +641,10 @@ export default function PearlShell({
       textureLoader.load(
         photoUrl,
         (texture) => {
+          if (photoGroupRef.current !== group) {
+            texture.dispose();
+            return;
+          }
           texture.colorSpace = THREE.SRGBColorSpace;
           const aspect = texture.image.width / texture.image.height;
           const geo = new THREE.PlaneGeometry(2 * aspect, 2);
@@ -900,130 +917,141 @@ export default function PearlShell({
   // Auto-open animation
   useEffect(() => {
     if (photoUrls.length > 0 && !hasAutoOpened.current) {
-      hasAutoOpened.current = true;
-      setTimeout(() => transitionToRef.current("OPEN"), 800);
+      const timer = setTimeout(() => {
+        hasAutoOpened.current = true;
+        transitionToRef.current("OPEN");
+      }, 800);
+      return () => clearTimeout(timer);
     }
   }, [photoUrls]);
 
   // Initialize MediaPipe Hands
   useEffect(() => {
-    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (!video || !rendererRef.current) return;
 
     let cancelled = false;
+    let stream: MediaStream | null = null;
     let handsInstance: HandsInstance | null = null;
     let inferenceFrameId: number | null = null;
 
-    const initMediaPipe = async () => {
-      const hands = new (getHandsCtor())({
-        locateFile: (file) => {
-          return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-        },
-      });
+    const stopTracking = () => {
+      if (inferenceFrameId !== null) cancelAnimationFrame(inferenceFrameId);
+      stream?.getTracks().forEach((track) => track.stop());
+      video.srcObject = null;
+      void handsInstance?.close().catch(() => {});
+      stream = null;
+      handsInstance = null;
+      handTrackingActiveRef.current = false;
+      gestureBufferRef.current = [];
+    };
 
-      if (cancelled) {
-        hands.close();
+    const handleTrackingError = (error: unknown) => {
+      if (cancelled) return;
+      console.warn("Hand tracking unavailable:", error);
+      stopTracking();
+      setCameraError("手势识别暂不可用。可用鼠标或触屏查看照片。");
+    };
+
+    const handleResults = (results: Results) => {
+      if (cancelled) return;
+      handTrackingActiveRef.current = true;
+      if (
+        !results.multiHandLandmarks ||
+        results.multiHandLandmarks.length === 0
+      ) {
         return;
       }
-      handsInstance = hands;
 
-      hands.setOptions({
-        maxNumHands: 1,
-        modelComplexity: MEDIAPIPE_MODEL_COMPLEXITY,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
+      const landmarks = results.multiHandLandmarks[0];
+      const detectedGesture = detectGesture(landmarks);
 
-      hands.onResults((results: Results) => {
-        if (cancelled) return;
-        handTrackingActiveRef.current = true;
-        if (
-          !results.multiHandLandmarks ||
-          results.multiHandLandmarks.length === 0
-        ) {
+      rawGestureRef.current = detectedGesture;
+      landmark9Ref.current = { x: landmarks[9].x, y: landmarks[9].y };
+
+      // Stabilize gesture via buffer
+      const buffer = gestureBufferRef.current;
+      buffer.push(detectedGesture);
+      if (buffer.length > GESTURE_STABILITY_FRAMES) buffer.shift();
+
+      const isStable =
+        buffer.length === GESTURE_STABILITY_FRAMES &&
+        buffer.every((g) => g === detectedGesture);
+
+      if (isStable && stableGestureRef.current !== detectedGesture) {
+        stableGestureRef.current = detectedGesture;
+        setGesture(detectedGesture);
+      }
+
+      // Update shell position/rotation based on hand
+      if (stateRef.current.currentState === "PHOTO_ZOOM") {
+        targetShellPositionRef.current = { x: 0, y: 0, z: 0 };
+        targetShellRotationRef.current = { x: 0, y: 0 };
+      } else {
+        const target = computeShellTarget(landmarks[9]);
+        targetShellPositionRef.current = target.position;
+        targetShellRotationRef.current = target.rotation;
+      }
+
+      if (detectedGesture === "OK") {
+        handPositionRef.current = { x: landmarks[9].x, y: landmarks[9].y };
+      }
+
+      // Camera follow in scattered mode
+      const shouldFollowCamera =
+        stateRef.current.currentState === "SCATTERED" &&
+        detectedGesture !== "OK" &&
+        detectedGesture !== "FIST" &&
+        detectedGesture !== "PEACE";
+
+      if (shouldFollowCamera && cameraRef.current && controlsRef.current) {
+        const now = performance.now();
+        if (now - lastCameraFollowTimeRef.current < CAMERA_FOLLOW_THROTTLE_MS)
           return;
-        }
+        lastCameraFollowTimeRef.current = now;
 
-        const landmarks = results.multiHandLandmarks[0];
-        const detectedGesture = detectGesture(landmarks);
-
-        rawGestureRef.current = detectedGesture;
-        landmark9Ref.current = { x: landmarks[9].x, y: landmarks[9].y };
-
-        // Stabilize gesture via buffer
-        const buffer = gestureBufferRef.current;
-        buffer.push(detectedGesture);
-        if (buffer.length > GESTURE_STABILITY_FRAMES) buffer.shift();
-
-        const isStable =
-          buffer.length === GESTURE_STABILITY_FRAMES &&
-          buffer.every((g) => g === detectedGesture);
-
-        if (isStable && stableGestureRef.current !== detectedGesture) {
-          stableGestureRef.current = detectedGesture;
-          setGesture(detectedGesture);
-        }
-
-        // Update shell position/rotation based on hand
-        if (stateRef.current.currentState === "PHOTO_ZOOM") {
-          targetShellPositionRef.current = { x: 0, y: 0, z: 0 };
-          targetShellRotationRef.current = { x: 0, y: 0 };
-        } else {
-          const target = computeShellTarget(landmarks[9]);
-          targetShellPositionRef.current = target.position;
-          targetShellRotationRef.current = target.rotation;
-        }
-
-        if (detectedGesture === "OK") {
-          handPositionRef.current = { x: landmarks[9].x, y: landmarks[9].y };
-        }
-
-        // Camera follow in scattered mode
-        const shouldFollowCamera =
-          stateRef.current.currentState === "SCATTERED" &&
-          detectedGesture !== "OK" &&
-          detectedGesture !== "FIST" &&
-          detectedGesture !== "PEACE";
-
-        if (shouldFollowCamera && cameraRef.current && controlsRef.current) {
-          const now = performance.now();
-          if (now - lastCameraFollowTimeRef.current < CAMERA_FOLLOW_THROTTLE_MS)
-            return;
-          lastCameraFollowTimeRef.current = now;
-
-          const x = (landmarks[9].x - 0.5) * 2;
-          const y = -(landmarks[9].y - 0.5) * 2;
-          const targetX = x * 20;
-          const targetY = Math.max(2, y * 20 + 10);
-          gsap.to(cameraRef.current.position, {
-            x: targetX,
-            y: targetY,
-            duration: 0.5,
-            ease: "power1.out",
-            overwrite: true,
-          });
-        }
-      });
-
-      if (cancelled || !videoRef.current) {
-        hands.close();
-        return;
+        const x = (landmarks[9].x - 0.5) * 2;
+        const y = -(landmarks[9].y - 0.5) * 2;
+        const targetX = x * 20;
+        const targetY = Math.max(2, y * 20 + 10);
+        gsap.to(cameraRef.current.position, {
+          x: targetX,
+          y: targetY,
+          duration: 0.5,
+          ease: "power1.out",
+          overwrite: true,
+        });
       }
+    };
 
-      // Custom getUserMedia + rAF loop (replaces @mediapipe/camera_utils Camera)
-      // Lower resolution + throttled inference to reduce GPU contention
+    const initMediaPipe = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        const cameraStream = await navigator.mediaDevices.getUserMedia({
           video: { width: CAMERA_WIDTH, height: CAMERA_HEIGHT },
         });
         if (cancelled) {
-          stream.getTracks().forEach((t) => t.stop());
-          hands.close();
+          cameraStream.getTracks().forEach((track) => track.stop());
           return;
         }
-        streamRef.current = stream;
-        const video = videoRef.current;
+        stream = cameraStream;
+        const { createHands } = await import("@/lib/handTracking");
+        if (cancelled) return;
+        const hands = await createHands();
+        if (cancelled) {
+          await hands.close();
+          return;
+        }
+        handsInstance = hands;
+        hands.setOptions({
+          maxNumHands: 1,
+          modelComplexity: MEDIAPIPE_MODEL_COMPLEXITY,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+        hands.onResults(handleResults);
         video.srcObject = stream;
         await video.play();
+        if (cancelled) return;
 
         let lastInferenceTime = 0;
         let inferenceInFlight = false;
@@ -1041,7 +1069,7 @@ export default function PearlShell({
             try {
               await hands.send({ image: video });
             } catch (err) {
-              console.warn("MediaPipe hands.send failed:", err);
+              handleTrackingError(err);
             } finally {
               inferenceInFlight = false;
             }
@@ -1049,22 +1077,7 @@ export default function PearlShell({
         };
         inferenceFrameId = requestAnimationFrame(processFrame);
       } catch (err: unknown) {
-        console.error("Camera start failed:", err);
-        if (!cancelled) {
-          const message = err instanceof Error ? err.message : "";
-          setCameraError(
-            message ||
-              "Failed to access camera. Please ensure permissions are granted.",
-          );
-        }
-      }
-
-      if (cancelled) {
-        if (streamRef.current) {
-          streamRef.current.getTracks().forEach((t) => t.stop());
-          streamRef.current = null;
-        }
-        hands.close();
+        handleTrackingError(err);
       }
     };
 
@@ -1072,14 +1085,7 @@ export default function PearlShell({
 
     return () => {
       cancelled = true;
-      if (inferenceFrameId !== null) cancelAnimationFrame(inferenceFrameId);
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      if (handsInstance) handsInstance.close();
-      handTrackingActiveRef.current = false;
-      gestureBufferRef.current = [];
+      stopTracking();
     };
   }, []);
 
@@ -1285,45 +1291,23 @@ export default function PearlShell({
 
       {/* Camera error */}
       {cameraError && (
-        <div
+        <p
+          role="status"
           style={{
             position: "absolute",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            background: "rgba(220,50,50,0.9)",
+            bottom: 12,
+            left: 12,
+            margin: 0,
+            background: "rgba(31,26,23,0.8)",
             color: "#fff",
-            padding: "24px 32px",
-            borderRadius: 16,
-            textAlign: "center",
-            zIndex: 50,
-            backdropFilter: "blur(12px)",
-            maxWidth: 360,
-            border: "1px solid rgba(255,255,255,0.2)",
+            padding: "6px 10px",
+            borderRadius: 8,
+            fontSize: 13,
+            pointerEvents: "none",
           }}
         >
-          <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>
-            Camera Access Denied
-          </h3>
-          <p style={{ fontSize: 13, opacity: 0.9, marginBottom: 12 }}>
-            {cameraError}
-          </p>
-          <button
-            onClick={() => globalThis.location.reload()}
-            style={{
-              background: "#fff",
-              color: "#c33",
-              fontWeight: 700,
-              padding: "8px 24px",
-              borderRadius: 20,
-              border: "none",
-              cursor: "pointer",
-              fontSize: 14,
-            }}
-          >
-            Refresh Page
-          </button>
-        </div>
+          {cameraError}
+        </p>
       )}
 
       {/* Hidden video element for MediaPipe hand tracking */}

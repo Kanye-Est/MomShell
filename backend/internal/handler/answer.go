@@ -69,7 +69,7 @@ func (h *AnswerHandler) Create(c *gin.Context) {
 	}
 
 	// Trigger AI reply if answer mentions @小石光
-	if h.communityAI != nil && service.ContainsMention(req.Content) {
+	if h.communityAI != nil && h.communityAI.IsMentioned(req.Content) {
 		go h.communityAI.HandleNewAnswer(answer.QuestionID, answer.ID)
 	}
 

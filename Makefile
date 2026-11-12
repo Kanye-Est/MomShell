@@ -1,4 +1,4 @@
-.PHONY: install install-backend install-frontend dev dev-backend dev-frontend \
+.PHONY: install install-backend install-frontend dev dev-backend dev-frontend dev-tmux \
         lint lint-backend lint-frontend format format-backend format-frontend \
         typecheck typecheck-backend typecheck-frontend check build-frontend build-backend \
         docker-up docker-down docker-logs docker-build \
@@ -8,6 +8,8 @@
 DB_USER ?= momshell
 DB_PASS ?= momshell
 DB_NAME ?= momshell
+export DB_USER DB_PASS DB_NAME
+DOCKER_COMPOSE = docker compose --env-file .env -f deploy/docker-compose.yml
 
 # Colors for terminal output
 CYAN := \033[36m
@@ -26,7 +28,7 @@ install-backend: ## Install backend dependencies
 
 install-frontend: ## Install frontend dependencies
 	@echo "$(CYAN)Installing frontend dependencies...$(RESET)"
-	cd frontend && npm install
+	cd frontend && npm ci --ignore-scripts
 
 ##@ Development
 
@@ -44,13 +46,13 @@ dev-tmux: ## Start both servers in tmux split panes
 		split-window -h 'make dev-frontend' \; \
 		attach
 
-dev-backend: postgres-up ## Start backend development server
-	@echo "$(CYAN)Starting backend server on http://localhost:8000$(RESET)"
+dev-backend: ## Start backend development server using the configured database
+	@echo "$(CYAN)Starting backend server...$(RESET)"
 	cd backend && go run cmd/server/main.go
 
 dev-frontend: ## Start frontend development server
 	@echo "$(CYAN)Starting frontend server on http://localhost:5173$(RESET)"
-	cd frontend && npx vite
+	cd frontend && npm run dev
 
 ##@ Code Quality
 
@@ -100,14 +102,14 @@ build-backend: ## Build backend binary
 
 docker-up: ## Start all services (app + postgres)
 	@echo "$(CYAN)Starting Docker containers...$(RESET)"
-	cd deploy && docker compose up -d --build
+	$(DOCKER_COMPOSE) up -d --build --wait
 
 docker-down: ## Stop all services
 	@echo "$(CYAN)Stopping Docker containers...$(RESET)"
-	cd deploy && docker compose down
+	$(DOCKER_COMPOSE) down
 
 docker-logs: ## Show Docker logs
-	cd deploy && docker compose logs -f
+	$(DOCKER_COMPOSE) logs -f
 
 docker-build: ## Build application Docker image
 	@echo "$(CYAN)Building Docker image...$(RESET)"
@@ -117,13 +119,11 @@ docker-build: ## Build application Docker image
 
 postgres-up: ## Start local PostgreSQL (systemd)
 	@echo "$(CYAN)Ensuring local PostgreSQL is running on localhost:5432...$(RESET)"
-	@if pg_isready -q 2>/dev/null; then \
+	@if pg_isready -h localhost -q; then \
 		echo "$(GREEN)PostgreSQL is already running$(RESET)"; \
 	else \
 		echo "$(YELLOW)Starting PostgreSQL via systemctl...$(RESET)"; \
-		sudo systemctl start postgresql; \
-		until pg_isready -q 2>/dev/null; do sleep 1; done; \
-		echo "$(GREEN)PostgreSQL is ready$(RESET)"; \
+		sudo systemctl start postgresql && pg_isready -h localhost -t 5; \
 	fi
 
 postgres-down: ## Stop local PostgreSQL (systemd)
@@ -136,7 +136,7 @@ postgres-logs: ## Show local PostgreSQL logs
 
 db-reset: postgres-up ## Reset PostgreSQL schema (drop and recreate public schema)
 	@echo "$(YELLOW)Resetting database...$(RESET)"
-	psql -U user -d momshell -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
+	PGPASSWORD="$$DB_PASS" psql -h localhost -U "$$DB_USER" -d "$$DB_NAME" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"
 	@echo "$(GREEN)Database reset. It will be recreated on next server start.$(RESET)"
 
 ##@ Dependencies

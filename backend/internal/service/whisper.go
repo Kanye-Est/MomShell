@@ -145,6 +145,9 @@ func (s *WhisperService) GetWhisperTips(callerID string) (*dto.WhisperTips, erro
 			Whispers: items,
 		}, nil
 	}
+	if !s.aiClient.Enabled() {
+		return &dto.WhisperTips{Tips: openai.ErrNotConfigured.Error(), Whispers: items}, nil
+	}
 
 	// Build whisper context
 	var sb strings.Builder
@@ -163,8 +166,12 @@ func (s *WhisperService) GetWhisperTips(callerID string) (*dto.WhisperTips, erro
 	tips, err := s.aiClient.Chat(ctx, messages)
 	if err != nil {
 		log.Printf("[WhisperService] AI tips generation failed: %v", err)
+		message := "暂时无法生成建议，请稍后再试。"
+		if errors.Is(err, openai.ErrAuthentication) {
+			message = openai.ErrAuthentication.Error()
+		}
 		return &dto.WhisperTips{
-			Tips:     "暂时无法生成建议，请稍后再试。",
+			Tips:     message,
 			Whispers: items,
 		}, nil
 	}

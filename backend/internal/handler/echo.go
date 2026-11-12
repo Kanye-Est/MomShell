@@ -13,11 +13,12 @@ import (
 )
 
 type EchoHandler struct {
-	echoService *service.EchoService
+	echoService            *service.EchoService
+	imageGenerationEnabled bool
 }
 
-func NewEchoHandler(echoService *service.EchoService) *EchoHandler {
-	return &EchoHandler{echoService: echoService}
+func NewEchoHandler(echoService *service.EchoService, imageGenerationEnabled bool) *EchoHandler {
+	return &EchoHandler{echoService: echoService, imageGenerationEnabled: imageGenerationEnabled}
 }
 
 func (h *EchoHandler) GetIdentityTags(c *gin.Context) {
@@ -111,11 +112,14 @@ func (h *EchoHandler) GenerateMemoir(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	memoir, err := h.echoService.GenerateMemoir(c.Request.Context(), userID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		respondWithAIError(c, http.StatusInternalServerError, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, memoir)
+	c.JSON(http.StatusOK, dto.GenerateMemoirResponse{
+		Memoir:                 memoir,
+		ImageGenerationEnabled: h.imageGenerationEnabled,
+	})
 }
 
 func (h *EchoHandler) RateMemoir(c *gin.Context) {

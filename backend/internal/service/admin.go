@@ -3,10 +3,8 @@ package service
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/momshell/backend/internal/config"
 	"github.com/momshell/backend/internal/dto"
@@ -21,7 +19,6 @@ type AdminService struct {
 	adminRepo *repository.AdminRepo
 	userRepo  *repository.UserRepo
 	photoRepo *repository.PhotoRepo
-	mu        sync.RWMutex
 }
 
 func NewAdminService(cfg *config.Config, adminRepo *repository.AdminRepo, userRepo *repository.UserRepo, photoRepo *repository.PhotoRepo) *AdminService {
@@ -301,19 +298,9 @@ func maskString(s string, showPrefix, showSuffix int) string {
 	return s[:showPrefix] + strings.Repeat("*", len(s)-showPrefix-showSuffix) + s[len(s)-showSuffix:]
 }
 
-// editableKeys defines which config keys can be edited at runtime
-var editableKeys = map[string]bool{
-	"OPENAI_API_KEY":                  true,
-	"OPENAI_BASE_URL":                 true,
-	"OPENAI_MODEL":                    true,
-	"JWT_ACCESS_TOKEN_EXPIRE_MINUTES": true,
-	"JWT_REFRESH_TOKEN_EXPIRE_DAYS":   true,
-}
-
 // GetConfig returns configuration items with sensitive values masked
 func (s *AdminService) GetConfig() []dto.ConfigItem {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	settings := s.cfg.Runtime()
 
 	return []dto.ConfigItem{
 		// Read-only
@@ -321,47 +308,15 @@ func (s *AdminService) GetConfig() []dto.ConfigItem {
 		{Key: "JWT_ALGORITHM", Value: s.cfg.JWTAlgorithm, Editable: false},
 		{Key: "PORT", Value: s.cfg.Port, Editable: false},
 		// Editable
-		{Key: "OPENAI_API_KEY", Value: maskString(s.cfg.OpenAIAPIKey, 3, 4), Editable: true},
-		{Key: "OPENAI_BASE_URL", Value: s.cfg.OpenAIBaseURL, Editable: true},
-		{Key: "OPENAI_MODEL", Value: s.cfg.OpenAIModel, Editable: true},
-		{Key: "JWT_ACCESS_TOKEN_EXPIRE_MINUTES", Value: strconv.Itoa(s.cfg.JWTAccessTokenExpireMin), Editable: true},
-		{Key: "JWT_REFRESH_TOKEN_EXPIRE_DAYS", Value: strconv.Itoa(s.cfg.JWTRefreshTokenExpireDays), Editable: true},
+		{Key: "OPENAI_API_KEY", Value: maskString(settings.OpenAIAPIKey, 3, 4), Editable: true},
+		{Key: "OPENAI_BASE_URL", Value: settings.OpenAIBaseURL, Editable: true},
+		{Key: "OPENAI_MODEL", Value: settings.OpenAIModel, Editable: true},
+		{Key: "JWT_ACCESS_TOKEN_EXPIRE_MINUTES", Value: strconv.Itoa(settings.JWTAccessTokenExpireMin), Editable: true},
+		{Key: "JWT_REFRESH_TOKEN_EXPIRE_DAYS", Value: strconv.Itoa(settings.JWTRefreshTokenExpireDays), Editable: true},
 	}
 }
 
 // UpdateConfig updates editable configuration items at runtime
 func (s *AdminService) UpdateConfig(req dto.ConfigUpdateRequest) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for key, value := range req.Items {
-		if !editableKeys[key] {
-			return fmt.Errorf("配置项 %s 不可编辑", key)
-		}
-
-		switch key {
-		case "OPENAI_API_KEY":
-			s.cfg.OpenAIAPIKey = value
-		case "OPENAI_BASE_URL":
-			s.cfg.OpenAIBaseURL = value
-		case "OPENAI_MODEL":
-			s.cfg.OpenAIModel = value
-		case "JWT_ACCESS_TOKEN_EXPIRE_MINUTES":
-			v, err := strconv.Atoi(value)
-			if err != nil || v <= 0 {
-				return fmt.Errorf("JWT_ACCESS_TOKEN_EXPIRE_MINUTES 必须是正整数")
-			}
-			s.cfg.JWTAccessTokenExpireMin = v
-		case "JWT_REFRESH_TOKEN_EXPIRE_DAYS":
-			v, err := strconv.Atoi(value)
-			if err != nil || v <= 0 {
-				return fmt.Errorf("JWT_REFRESH_TOKEN_EXPIRE_DAYS 必须是正整数")
-			}
-			s.cfg.JWTRefreshTokenExpireDays = v
-		}
-
-		_ = os.Setenv(key, value)
-	}
-
-	return nil
+	return s.cfg.UpdateRuntime(req.Items)
 }

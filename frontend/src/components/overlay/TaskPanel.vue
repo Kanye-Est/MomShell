@@ -689,36 +689,10 @@ function initScoreMap(taskList: UserTaskItem[]) {
   }
 }
 
-function mergeTaskFields(existing: UserTaskItem, incoming: UserTaskItem) {
-  if (existing.status !== incoming.status) existing.status = incoming.status
-  if (existing.priority !== incoming.priority) existing.priority = incoming.priority
-  if (existing.score !== incoming.score) existing.score = incoming.score
-  if (existing.comment !== incoming.comment) existing.comment = incoming.comment
-  if (existing.proof_photo_url !== incoming.proof_photo_url) existing.proof_photo_url = incoming.proof_photo_url
-  if (existing.completed_at !== incoming.completed_at) existing.completed_at = incoming.completed_at
-  if (existing.scored_at !== incoming.scored_at) existing.scored_at = incoming.scored_at
-}
-
-function mergeTaskList(taskList: UserTaskItem[]) {
-  for (const incoming of taskList) {
-    const existing = tasks.value.find((t) => t.id === incoming.id)
-    if (existing) {
-      mergeTaskFields(existing, incoming)
-    }
-  }
-}
-
 async function pollTasks() {
+  if (loading.value || scoring.value || completing.value || settingAge.value) return
   try {
-    const [taskList, taskStats] = await Promise.all([
-      isDad.value ? getDailyTasks() : getPartnerTasks(),
-      getTaskStats(),
-    ])
-    mergeTaskList(taskList)
-    if (stats.value?.xp !== taskStats.xp || stats.value?.level !== taskStats.level) {
-      stats.value = taskStats
-    }
-    initScoreMap(taskList)
+    await fetchTasks()
   } catch {
     // Silently ignore poll errors
   }
@@ -755,7 +729,7 @@ watch(
       } finally {
         loading.value = false
       }
-      startPolling()
+      if (uiStore.activePanel === 'task' && activeTab.value === 'board') startPolling()
     } else {
       stopPolling()
     }

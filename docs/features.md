@@ -50,10 +50,10 @@ Photo management with AI-powered image generation.
 
 ## Whisper
 
-Audio-to-text conversation feature.
+Private text messages between linked partners.
 
-- **Speech recognition**: Convert spoken words to text for the AI companion
-- **Conque shell metaphor**: Listen and speak through the beach shell
+- **Mailbox** for writing and reading messages
+- **AI suggestions** based on recent messages when an AI provider is configured
 
 ## Tasks
 

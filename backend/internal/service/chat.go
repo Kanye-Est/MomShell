@@ -263,6 +263,9 @@ func (s *ChatService) buildNicknameMap(familyIDs []string) map[string]string {
 }
 
 func (s *ChatService) Chat(ctx context.Context, msg dto.UserMessage, userID string) (*dto.VisualResponse, error) {
+	if !s.client.Enabled() {
+		return nil, openai.ErrNotConfigured
+	}
 	if userID != "" {
 		return s.chatAuthenticated(ctx, msg, userID)
 	}

@@ -139,141 +139,144 @@ $DB_NAME = "momshell"
 $DB_USER = "momshell"
 $DB_PASS = "momshell"
 
-# Check if PostgreSQL is running
-$pgReady = $false
-try {
-    $null = pg_isready 2>$null
-    if ($LASTEXITCODE -eq 0) { $pgReady = $true }
-} catch {}
-
-if ($pgReady) {
-    Write-Ok "PostgreSQL is running"
+$envFile = Join-Path $ProjectRoot ".env"
+if ((Test-Path $envFile -PathType Leaf) -or $env:DATABASE_URL) {
+    Write-Ok "Using the configured database"
 } else {
-    Write-Warn "PostgreSQL is not running, attempting to start..."
-    # Try starting via Windows service
-    $pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($pgService) {
-        try {
-            Start-Service $pgService.Name -ErrorAction Stop
-            Start-Sleep -Seconds 2
-            Write-Ok "PostgreSQL service '$($pgService.Name)' started"
-        } catch {
-            Write-Fail "Could not start PostgreSQL service. Run this script as Administrator, or start PostgreSQL manually."
-            Write-Host "  Try: Start-Service $($pgService.Name)" -ForegroundColor Yellow
-            exit 1
-        }
-    } else {
-        # Try pg_ctl with default data directory
-        $pgData = $null
-        if ($env:PGDATA) { $pgData = $env:PGDATA }
-        elseif (Test-Path "$env:PROGRAMFILES\PostgreSQL") {
-            $pgDir = Get-ChildItem "$env:PROGRAMFILES\PostgreSQL" -Directory | Sort-Object Name -Descending | Select-Object -First 1
-            if ($pgDir -and (Test-Path "$($pgDir.FullName)\data")) {
-                $pgData = "$($pgDir.FullName)\data"
-            }
-        }
-        if ($pgData -and (Test-Command "pg_ctl")) {
-            Write-Info "Starting PostgreSQL with pg_ctl..."
-            pg_ctl start -D $pgData -l "$pgData\server.log"
-            Start-Sleep -Seconds 3
-        } else {
-            Write-Fail "Could not find or start PostgreSQL. Please start it manually."
-            Write-Host "  Common locations: C:\Program Files\PostgreSQL\<version>\data" -ForegroundColor Yellow
-            exit 1
-        }
-    }
-
-    # Verify it's now running
+    # Check if PostgreSQL is running
+    $pgReady = $false
     try {
         $null = pg_isready 2>$null
-        if ($LASTEXITCODE -ne 0) { throw "not ready" }
+        if ($LASTEXITCODE -eq 0) { $pgReady = $true }
+    } catch {}
+
+    if ($pgReady) {
         Write-Ok "PostgreSQL is running"
+    } else {
+        Write-Warn "PostgreSQL is not running, attempting to start..."
+        # Try starting via Windows service
+        $pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($pgService) {
+            try {
+                Start-Service $pgService.Name -ErrorAction Stop
+                Start-Sleep -Seconds 2
+                Write-Ok "PostgreSQL service '$($pgService.Name)' started"
+            } catch {
+                Write-Fail "Could not start PostgreSQL service. Run this script as Administrator, or start PostgreSQL manually."
+                Write-Host "  Try: Start-Service $($pgService.Name)" -ForegroundColor Yellow
+                exit 1
+            }
+        } else {
+            # Try pg_ctl with default data directory
+            $pgData = $null
+            if ($env:PGDATA) { $pgData = $env:PGDATA }
+            elseif (Test-Path "$env:PROGRAMFILES\PostgreSQL") {
+                $pgDir = Get-ChildItem "$env:PROGRAMFILES\PostgreSQL" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+                if ($pgDir -and (Test-Path "$($pgDir.FullName)\data")) {
+                    $pgData = "$($pgDir.FullName)\data"
+                }
+            }
+            if ($pgData -and (Test-Command "pg_ctl")) {
+                Write-Info "Starting PostgreSQL with pg_ctl..."
+                pg_ctl start -D $pgData -l "$pgData\server.log"
+                Start-Sleep -Seconds 3
+            } else {
+                Write-Fail "Could not find or start PostgreSQL. Please start it manually."
+                Write-Host "  Common locations: C:\Program Files\PostgreSQL\<version>\data" -ForegroundColor Yellow
+                exit 1
+            }
+        }
+
+        # Verify it's now running
+        try {
+            $null = pg_isready 2>$null
+            if ($LASTEXITCODE -ne 0) { throw "not ready" }
+            Write-Ok "PostgreSQL is running"
+        } catch {
+            Write-Fail "PostgreSQL still not responding. Please start it manually and re-run."
+            exit 1
+        }
+    }
+
+    # On Windows, PostgreSQL installer creates a 'postgres' superuser by default.
+    # Connect as postgres to create the app user/database.
+    $env:PGPASSWORD = ""
+
+    # Helper to run psql as the postgres superuser
+    function Invoke-PgSuperuser {
+        param([string]$Sql)
+        # Try connecting as postgres user (default installer superuser)
+        $env:PGPASSWORD = "postgres"
+        $result = psql -w -h localhost -U postgres -tAc $Sql 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            # Try without password (peer/trust auth)
+            $env:PGPASSWORD = ""
+            $result = psql -w -h localhost -U postgres -tAc $Sql 2>$null
+        }
+        return $result
+    }
+
+    function Invoke-PgSuperuserCmd {
+        param([string]$Sql)
+        $env:PGPASSWORD = "postgres"
+        psql -w -h localhost -U postgres -c $Sql 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $env:PGPASSWORD = ""
+            psql -w -h localhost -U postgres -c $Sql 2>$null
+        }
+    }
+
+    # Create user
+    $userExists = Invoke-PgSuperuser "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'"
+    if ($userExists -match "1") {
+        Write-Ok "Database user '$DB_USER' exists"
+    } else {
+        Write-Info "Creating database user '$DB_USER'..."
+        Invoke-PgSuperuserCmd "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';"
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Database user '$DB_USER' created"
+        } else {
+            Write-Warn "Could not create user. You may need to set the postgres superuser password."
+            Write-Host "  Try: psql -w -h localhost -U postgres -c `"CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';`"" -ForegroundColor Yellow
+        }
+    }
+
+    # Create database
+    $dbExists = Invoke-PgSuperuser "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'"
+    if ($dbExists -match "1") {
+        Write-Ok "Database '$DB_NAME' exists"
+    } else {
+        Write-Info "Creating database '$DB_NAME'..."
+        Invoke-PgSuperuserCmd "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Database '$DB_NAME' created"
+        } else {
+            Write-Warn "Could not create database. Create it manually."
+            Write-Host "  Try: psql -w -h localhost -U postgres -c `"CREATE DATABASE $DB_NAME OWNER $DB_USER;`"" -ForegroundColor Yellow
+        }
+    }
+
+    # Test connection
+    $env:PGPASSWORD = $DB_PASS
+    try {
+        $null = psql -w -h localhost -U $DB_USER -d $DB_NAME -c "SELECT 1" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "Database connection verified"
+        } else {
+            throw "connection failed"
+        }
     } catch {
-        Write-Fail "PostgreSQL still not responding. Please start it manually and re-run."
-        exit 1
+        Write-Warn "Could not connect via localhost. Check pg_hba.conf allows password auth."
+        Write-Host "  Add to pg_hba.conf: host all all 127.0.0.1/32 md5" -ForegroundColor Yellow
     }
+    $env:PGPASSWORD = ""
 }
-
-# On Windows, PostgreSQL installer creates a 'postgres' superuser by default.
-# Connect as postgres to create the app user/database.
-$env:PGPASSWORD = ""
-
-# Helper to run psql as the postgres superuser
-function Invoke-PgSuperuser {
-    param([string]$Sql)
-    # Try connecting as postgres user (default installer superuser)
-    $env:PGPASSWORD = "postgres"
-    $result = psql -h localhost -U postgres -tAc $Sql 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        # Try without password (peer/trust auth)
-        $env:PGPASSWORD = ""
-        $result = psql -h localhost -U postgres -tAc $Sql 2>$null
-    }
-    return $result
-}
-
-function Invoke-PgSuperuserCmd {
-    param([string]$Sql)
-    $env:PGPASSWORD = "postgres"
-    psql -h localhost -U postgres -c $Sql 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        $env:PGPASSWORD = ""
-        psql -h localhost -U postgres -c $Sql 2>$null
-    }
-}
-
-# Create user
-$userExists = Invoke-PgSuperuser "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'"
-if ($userExists -match "1") {
-    Write-Ok "Database user '$DB_USER' exists"
-} else {
-    Write-Info "Creating database user '$DB_USER'..."
-    Invoke-PgSuperuserCmd "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';"
-    if ($LASTEXITCODE -eq 0) {
-        Write-Ok "Database user '$DB_USER' created"
-    } else {
-        Write-Warn "Could not create user. You may need to set the postgres superuser password."
-        Write-Host "  Try: psql -h localhost -U postgres -c `"CREATE USER $DB_USER WITH PASSWORD '$DB_PASS';`"" -ForegroundColor Yellow
-    }
-}
-
-# Create database
-$dbExists = Invoke-PgSuperuser "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'"
-if ($dbExists -match "1") {
-    Write-Ok "Database '$DB_NAME' exists"
-} else {
-    Write-Info "Creating database '$DB_NAME'..."
-    Invoke-PgSuperuserCmd "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
-    if ($LASTEXITCODE -eq 0) {
-        Write-Ok "Database '$DB_NAME' created"
-    } else {
-        Write-Warn "Could not create database. Create it manually."
-        Write-Host "  Try: psql -h localhost -U postgres -c `"CREATE DATABASE $DB_NAME OWNER $DB_USER;`"" -ForegroundColor Yellow
-    }
-}
-
-# Test connection
-$env:PGPASSWORD = $DB_PASS
-try {
-    $null = psql -h localhost -U $DB_USER -d $DB_NAME -c "SELECT 1" 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Ok "Database connection verified"
-    } else {
-        throw "connection failed"
-    }
-} catch {
-    Write-Warn "Could not connect via localhost. Check pg_hba.conf allows password auth."
-    Write-Host "  Add to pg_hba.conf: host all all 127.0.0.1/32 md5" -ForegroundColor Yellow
-}
-$env:PGPASSWORD = ""
 
 # ============================================
 # 3. Environment variables
 # ============================================
 Write-Host ""
 Write-Host "=== 3. Configure Environment Variables ===" -ForegroundColor Cyan
-
-$envFile = Join-Path $ProjectRoot ".env"
 
 if (Test-Path $envFile) {
     Write-Ok ".env already exists, skipping interactive config"
@@ -283,7 +286,8 @@ if (Test-Path $envFile) {
 
     # Database
     Write-Host "  -- Database --" -ForegroundColor Cyan
-    $defaultDbUrl = "postgres://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}?sslmode=disable"
+    $defaultDbUrl = $env:DATABASE_URL
+    if (-not $defaultDbUrl) { $defaultDbUrl = "postgres://${DB_USER}:${DB_PASS}@localhost:5432/${DB_NAME}?sslmode=disable" }
     $DATABASE_URL = Read-Default "DATABASE_URL" $defaultDbUrl
 
     # JWT
@@ -306,10 +310,6 @@ if (Test-Path $envFile) {
     Write-Host "  -- Server --" -ForegroundColor Cyan
     $PORT = Read-Default "PORT" "8000"
 
-    # Frontend
-    Write-Host "  -- Frontend --" -ForegroundColor Cyan
-    $VITE_API_BASE_URL = Read-Default "VITE_API_BASE_URL" "http://localhost:8000"
-
     # Admin
     Write-Host "  -- Initial Admin (optional) --" -ForegroundColor Cyan
     $ADMIN_USERNAME = Read-Default "ADMIN_USERNAME" ""
@@ -317,10 +317,13 @@ if (Test-Path $envFile) {
     $ADMIN_PASSWORD = Read-Default "ADMIN_PASSWORD" ""
 
     # Write .env
-    @"
+    $envContents = @"
 # MomShell Environment Configuration
 
 # ==================== Database ====================
+POSTGRES_USER=$DB_USER
+POSTGRES_PASSWORD=$DB_PASS
+POSTGRES_DB=$DB_NAME
 DATABASE_URL=$DATABASE_URL
 
 # ==================== JWT ====================
@@ -336,14 +339,12 @@ OPENAI_MODEL=$OPENAI_MODEL
 # ==================== Server ====================
 PORT=$PORT
 
-# ==================== Frontend ====================
-VITE_API_BASE_URL=$VITE_API_BASE_URL
-
 # ==================== Initial Admin (optional, created on first startup) ====================
 ADMIN_USERNAME=$ADMIN_USERNAME
 ADMIN_EMAIL=$ADMIN_EMAIL
 ADMIN_PASSWORD=$ADMIN_PASSWORD
-"@ | Set-Content -Path $envFile -Encoding UTF8
+"@
+    [System.IO.File]::WriteAllText($envFile, $envContents + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 
     Write-Host ""
     Write-Ok ".env created"
@@ -354,19 +355,6 @@ ADMIN_PASSWORD=$ADMIN_PASSWORD
 # ============================================
 Write-Host ""
 Write-Host "=== 4. Initialize Backend (Go) ===" -ForegroundColor Cyan
-
-# Set Go proxy to Chinese mirror if default proxy is unreachable
-$currentProxy = (go env GOPROXY) 2>$null
-if ($currentProxy -match "proxy\.golang\.org") {
-    Write-Info "Testing Go module proxy connectivity..."
-    try {
-        $null = Invoke-WebRequest -Uri "https://proxy.golang.org/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-    } catch {
-        Write-Warn "proxy.golang.org unreachable, switching to goproxy.cn"
-        go env -w GOPROXY=https://goproxy.cn,direct
-        Write-Ok "GOPROXY set to https://goproxy.cn,direct"
-    }
-}
 
 Write-Info "Downloading Go dependencies..."
 Push-Location (Join-Path $ProjectRoot "backend")
@@ -385,34 +373,11 @@ Write-Ok "Backend dependencies installed"
 Write-Host ""
 Write-Host "=== 5. Initialize Frontend (Vue) ===" -ForegroundColor Cyan
 
-# Set npm registry to Chinese mirror if default registry is unreachable
-$currentNpmRegistry = (npm config get registry) 2>$null
-if ($currentNpmRegistry -match "registry\.npmjs\.org") {
-    Write-Info "Testing npm registry connectivity..."
-    try {
-        $null = Invoke-WebRequest -Uri "https://registry.npmjs.org/" -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
-    } catch {
-        Write-Warn "registry.npmjs.org unreachable, switching to npmmirror.com"
-        npm config set registry https://registry.npmmirror.com
-        Write-Ok "npm registry set to https://registry.npmmirror.com"
-    }
-}
-
 Write-Info "Installing npm dependencies..."
-$frontendDir = Join-Path $ProjectRoot "frontend"
-$nodeModules = Join-Path $frontendDir "node_modules"
-if (Test-Path $nodeModules) {
-    Write-Info "Cleaning stale node_modules..."
-    Remove-Item $nodeModules -Recurse -Force
-}
-# Use Chinese mirror for Puppeteer's Chromium download if needed
-if (-not $env:PUPPETEER_DOWNLOAD_BASE_URL) {
-    $env:PUPPETEER_DOWNLOAD_BASE_URL = "https://registry.npmmirror.com/mirrors/chrome-for-testing"
-}
-Push-Location $frontendDir
-npm install
+Push-Location (Join-Path $ProjectRoot "frontend")
+npm ci --ignore-scripts
 if ($LASTEXITCODE -ne 0) {
-    Write-Fail "npm install failed"
+    Write-Fail "npm ci failed"
     Pop-Location
     exit 1
 }

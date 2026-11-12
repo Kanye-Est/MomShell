@@ -55,7 +55,7 @@ func ContainsMention(content string) bool {
 
 // IsMentioned checks if the given content mentions @小石光.
 func (s *CommunityAIService) IsMentioned(content string) bool {
-	return ContainsMention(content)
+	return s.client.Enabled() && ContainsMention(content)
 }
 
 // ShouldReplyToComment returns true if AI should reply to this comment:
@@ -63,6 +63,9 @@ func (s *CommunityAIService) IsMentioned(content string) bool {
 // - comment is on an AI-authored answer, OR
 // - comment is a reply to an AI-authored comment.
 func (s *CommunityAIService) ShouldReplyToComment(content, answerID string, parentID *string) bool {
+	if !s.client.Enabled() {
+		return false
+	}
 	if ContainsMention(content) {
 		return true
 	}
@@ -81,6 +84,9 @@ func (s *CommunityAIService) ShouldReplyToComment(content, answerID string, pare
 
 // HandleNewQuestion generates an AI answer for a question that mentions @小石光.
 func (s *CommunityAIService) HandleNewQuestion(questionID string) {
+	if !s.client.Enabled() {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 

@@ -18,18 +18,18 @@ Format: `postgres://user:password@host:5432/dbname?sslmode=disable`
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | Access token lifetime | No | `30` |
 | `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token lifetime | No | `7` |
 
-The setup script auto-generates `JWT_SECRET_KEY`. Change it manually for production.
+The setup script auto-generates `JWT_SECRET_KEY`. Set a persistent secret in production to preserve sessions across restarts. A server started without one generates a temporary signing key.
 
 ## OpenAI Compatible API
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `OPENAI_API_KEY` | API key for LLM service | **Yes** | — |
+| `OPENAI_API_KEY` | API key for the configured provider | For AI features | — |
 | `OPENAI_BASE_URL` | API base URL | No | `https://api-inference.modelscope.cn/v1` |
 | `OPENAI_MODEL` | Model name | No | `Qwen/Qwen3-235B-A22B` |
-| `IMAGE_MODEL` | Model for AI image generation | No | `Tongyi-MAI/Z-Image-Turbo` |
+| `IMAGE_MODEL` | Model for AI image generation. Set `IMAGE_MODEL=` for a text-only provider. | No | `Tongyi-MAI/Z-Image-Turbo` when unset |
 
-Any OpenAI-compatible API is supported (ModelScope, OpenAI, local Ollama, etc.).
+Chat and image generation use the corresponding OpenAI-compatible endpoints of the configured provider. Memoirs display a built-in cover when AI image generation is disabled or fails. The task board uses built-in templates when AI generation is unavailable.
 
 ## Web Search
 
@@ -44,14 +44,15 @@ When set, AI replies use web search to reduce hallucinations for factual questio
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `PORT` | HTTP server port | No | `8000` |
+| `TRUSTED_PROXIES` | Comma-separated IPs or CIDRs of reverse proxies that supply client IP headers | No | `127.0.0.1` in the combined Docker image |
 
 ## Frontend
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `VITE_API_BASE_URL` | Backend API URL for frontend | No | `http://localhost:8000` |
+| `VITE_API_BASE_URL` | Optional same-site HTTPS API origin, set at build time or in `frontend/.env.local` | No | Same origin |
 
-Leave empty in production when using Nginx reverse proxy.
+Vite proxies local requests to the backend `PORT` from the project `.env`. A separate API origin needs credentialed CORS with `CORS_ORIGINS` set to the frontend's exact origin.
 
 ## Initial Admin Account
 
@@ -65,7 +66,7 @@ Set all three to auto-create an admin on first startup. Skipped if the username 
 
 ## Runtime Configuration
 
-The following can also be changed at runtime via the admin panel (`/admin` → System Config):
+The following can also be changed for the running process in the admin panel (`/admin` → System Config). Update the deployment environment for settings that should survive a restart.
 
 - `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
 - `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`, `JWT_REFRESH_TOKEN_EXPIRE_DAYS`
